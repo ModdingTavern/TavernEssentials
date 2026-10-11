@@ -1,8 +1,10 @@
 using System;
-using System.IdentityModel.Tokens.Jwt;
+using System.Globalization;
 using System.Reflection;
 using System.Security.Claims;
+using System.Threading;
 using System.Threading.Tasks;
+using Alta.Api.DataTransferModels.Converters;
 using Alta.Networking.Servers;
 using HarmonyLib;
 
@@ -11,6 +13,7 @@ namespace TavernEssentials.JoinGuard
     internal static class JoinGuardFeature
     {
         internal const string Refused = "Your game asked to join as another player. Update TavernEssentials (or TavernBoard) on your PC, or join from the launcher.";
+        internal const string Unreadable = "This server could not read your login token. Join from the launcher.";
 
         internal static bool Start()
         {
@@ -41,44 +44,81 @@ namespace TavernEssentials.JoinGuard
 
         public static void Postfix(int playerId, string tokenString, ref object __result)
         {
+            string verdict;
             try
             {
-                string name;
-                int tokenId;
-                if (!Read(tokenString, out tokenId, out name)) return;
-                if (tokenId == playerId || AlreadyRefused(__result)) return;
-                if (JoinGuardConfig.Mode != JoinGuardConfig.ModeRefuse)
-                {
-                    Log.Warn("\"" + name + "\" (token id " + tokenId + ") joined as id " + playerId
-                        + ": another account's id. Let in (joinguard_mode=log); refuse would turn them away.");
-                    return;
-                }
-                object denied = Denied(Refused);
-                if (denied == null) return;
-                __result = denied;
-                Log.Warn("refused \"" + name + "\" (token id " + tokenId + "): the game asked to join as id " + playerId + ".");
+                verdict = Check(playerId, tokenString, ref __result);
             }
             catch (Exception e)
             {
+                verdict = "not checked: " + e.GetType().Name;
                 Log.Warn("checking a join: " + e.GetType().Name + ": " + e.Message);
             }
+            if (Interlocked.Exchange(ref _firstChecked, 1) == 0)
+                Log.Msg("checked the first join (id " + playerId + ": " + verdict + ").");
         }
 
-        internal static bool Read(string tokenString, out int id, out string name)
+        static int _firstChecked;
+
+        static string Check(int playerId, string tokenString, ref object __result)
+        {
+            if (AlreadyRefused(__result)) return "already refused before the guard";
+            string name;
+            int tokenId;
+            string why = Read(tokenString, out tokenId, out name);
+            bool refuse = JoinGuardConfig.Mode == JoinGuardConfig.ModeRefuse;
+            if (why != null)
+            {
+                if (!refuse)
+                {
+                    Log.Warn("a join as id " + playerId + " with a token " + why
+                        + ": let in (joinguard_mode=log); refuse would turn it away.");
+                    return "logged: token " + why;
+                }
+                if (!Deny(Unreadable, ref __result)) return "let in: no refusal could be built";
+                Log.Warn("refused a join as id " + playerId + ": its token " + why + ".");
+                return "refused: token " + why;
+            }
+            if (tokenId == playerId) return "its token's own id";
+            if (!refuse)
+            {
+                Log.Warn("\"" + name + "\" (token id " + tokenId + ") joined as id " + playerId
+                    + ": another account's id. Let in (joinguard_mode=log); refuse would turn them away.");
+                return "logged: another account's id";
+            }
+            if (!Deny(Refused, ref __result)) return "let in: no refusal could be built";
+            Log.Warn("refused \"" + name + "\" (token id " + tokenId + "): the game asked to join as id " + playerId + ".");
+            return "refused: another account's id";
+        }
+
+        static bool Deny(string why, ref object __result)
+        {
+            object denied = Denied(why);
+            if (denied == null) return false;
+            __result = denied;
+            return true;
+        }
+
+        internal static string Read(string tokenString, out int id, out string name)
         {
             id = 0;
             name = null;
-            if (string.IsNullOrEmpty(tokenString)) return false;
-            JwtSecurityToken token;
-            try { token = new JwtSecurityToken(tokenString); }
-            catch (Exception) { return false; }
+            if (string.IsNullOrEmpty(tokenString)) return "that is empty";
             string uid = null;
-            foreach (Claim c in token.Claims)
+            int uids = 0, names = 0;
+            try
             {
-                if (c.Type == "UserId") uid = c.Value;
-                else if (c.Type == "Username") name = c.Value;
+                foreach (Claim c in JWTUtility.CreateFromString(tokenString, false).Claims)
+                {
+                    if (c.Type == "UserId") { uids++; uid = c.Value; }
+                    else if (c.Type == "Username") { names++; name = c.Value; }
+                }
             }
-            return uid != null && int.TryParse(uid, out id);
+            catch (Exception) { return "that cannot be read"; }
+            if (uids != 1) return "that has " + uids + " UserId claims";
+            if (names != 1) return "that has " + names + " Username claims";
+            if (!int.TryParse(uid, NumberStyles.None, CultureInfo.InvariantCulture, out id)) return "whose UserId is not a number";
+            return null;
         }
 
         static bool AlreadyRefused(object task)

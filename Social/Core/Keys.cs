@@ -206,6 +206,23 @@ namespace TavernEssentials.Social
             return fingerprint.Length <= 8 ? fingerprint : fingerprint.Substring(0, 8);
         }
 
+        internal static string Shorten(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return text;
+            StringBuilder sb = new StringBuilder(text.Length);
+            int i = 0;
+            while (i < text.Length)
+            {
+                int run = 0;
+                while (i + run < text.Length && IsBase64UrlChar(text[i + run])) run++;
+                if (run == 0) { sb.Append(text[i]); i++; continue; }
+                string word = text.Substring(i, run);
+                sb.Append(run >= 43 ? word.Substring(0, 8) + "..." : word);
+                i += run;
+            }
+            return sb.ToString();
+        }
+
         internal static bool LooksLikeFingerprint(string s)
         {
             if (s == null || s.Length != 43) return false;

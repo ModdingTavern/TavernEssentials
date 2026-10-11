@@ -116,12 +116,16 @@ namespace TavernEssentials.Social
     {
         internal static readonly double[] HelloWaits = { 2.5, 2.5, 5, 10, 15 };
         internal static int HelloTries { get { return HelloWaits.Length; } }
+        internal const int FreshRetries = 2;
         internal const double ProofWait = 15;
         internal const int NoSession = -1;
         internal const int MaxCoSigning = 4;
         internal const double RefusalLogEvery = 10;
         internal const double ShowEvery = 1.5;
         internal const double RecognitionWait = 30;
+        internal const double WithdrawEvery = 7;
+        internal const int MaxPending = 20;
+        internal const int MaxEarly = 8;
 
         internal delegate void SendFn(uint kind, Fields body);
         internal delegate void Signed(byte[] signature, Exception error);
@@ -129,6 +133,8 @@ namespace TavernEssentials.Social
         internal delegate bool ConsentFn(int sessionId, out string name);
         internal delegate void KeepFn(FriendRecord record, PublicKey friend, string name);
         internal delegate bool HeldFn(string friendFingerprint);
+        internal delegate void SaidFn(bool friendsWork);
+        internal delegate void TheyRemovedFn(string friendFingerprint, List<KeyValuePair<long, string>> records, string name);
 
         internal enum Stage { Idle, Hello, Signing, Proved, Confirmed, Silent, Refused }
 
@@ -140,9 +146,14 @@ namespace TavernEssentials.Social
         internal ConsentFn Consented;
         internal KeepFn Keep;
         internal HeldFn StillHeld;
+        internal SaidFn ServerSaid;
+        internal TheyRemovedFn TheyRemoved;
         internal FriendBook Book;
+        internal RecordIndex Copies;
         Stage _stage;
         int _tries;
+        int _retries;
+        bool _retryHello;
         double _nextHello;
         double _proofAt;
         double _now;
@@ -168,6 +179,14 @@ namespace TavernEssentials.Social
         readonly Dictionary<string, AwayFriend> _away = new Dictionary<string, AwayFriend>();
         internal const int MaxKnown = 2000;
 
+        internal bool ServerWithdraws;
+        readonly List<Withdrawal> _fresh = new List<Withdrawal>();
+        List<Withdrawal> _backlog;
+        readonly HashSet<string> _handed = new HashSet<string>();
+        double _nextWithdraw;
+        readonly HashSet<string> _withdrawn = new HashSet<string>();
+        readonly List<Fields> _early = new List<Fields>();
+
         internal ClientProtocol(SendFn send, SignFn sign)
         {
             _send = send;
@@ -177,6 +196,8 @@ namespace TavernEssentials.Social
         internal Stage Current { get { return _stage; } }
         internal string ServerFingerprint { get { return _serverFp; } }
         internal bool Friends { get { return Consented != null && Keep != null; } }
+
+        internal bool Withdraws { get { return Friends && TheyRemoved != null; } }
 
         internal List<int> FriendsHere()
         {
@@ -251,31 +272,42 @@ namespace TavernEssentials.Social
             }
         }
 
-        internal void UseBook(FriendBook book)
+        internal void UseBook(FriendBook book, RecordIndex copies = null)
         {
             if (book != null)
                 foreach (string fp in _archived.Keys) book.Remove(fp);
+            if (copies != null)
+                foreach (string fp in _archived.Keys) copies.RemoveAll(fp);
+            Copies = copies;
             Book = book;
         }
 
-        internal void Archived(string friendFingerprint, string name)
+        internal void Removed(string friendFingerprint, string name, List<Withdrawal> made)
         {
             FriendBook.Entry e = Book == null ? null : Book.Find(friendFingerprint);
             if (string.IsNullOrEmpty(name) && e != null) name = e.Name;
             _archived[friendFingerprint] = name;
             _away.Remove(friendFingerprint);
             if (Book != null) Book.Remove(friendFingerprint);
-            if (_shownAt.ContainsKey(friendFingerprint))
-                Log.Msg("friend " + Named(name, friendFingerprint) + " archived: no longer counted as a friend here."
-                    + " This server was shown your record already, so their game counts you as a friend until you leave.");
+            _shownAt.Remove(friendFingerprint);
+            _quiet.Remove(friendFingerprint);
+            if (Copies != null) Copies.RemoveAll(friendFingerprint);
+            if (made != null)
+                foreach (Withdrawal w in made)
+                    if (!_fresh.Exists(delegate(Withdrawal x) { return x.Index == w.Index; })) _fresh.Add(w);
+            if (made != null && made.Count > 0)
+                Log.Msg("friend " + Named(name, friendFingerprint) + " removed. Their game is told on the TE servers you both visit.");
+            else
+                Log.Msg("friend " + Named(name, friendFingerprint) + " removed here. You held no record with them to withdraw, so their game is not told.");
         }
+
+        internal int EarlyCount { get { return _early.Count; } }
 
         internal void Restored(FriendRecord record, string name)
         {
             if (Key == null || record == null) return;
             PublicKey friend = record.Other(Key.Public);
             if (friend == null) return;
-            _archived.Remove(friend.Fingerprint);
             if (Book != null) Book.Put(record, Key.Public, name);
         }
 
@@ -284,9 +316,12 @@ namespace TavernEssentials.Social
             _epoch++;
             _stage = Stage.Hello;
             _tries = 0;
+            _retries = 0;
+            _retryHello = false;
             _nextHello = 0;
             Forget();
             Book = null;
+            Copies = null;
             LastProblem = null;
         }
 
@@ -303,11 +338,18 @@ namespace TavernEssentials.Social
             _server = null;
             ServerWitnesses = false;
             ServerRecognises = false;
+            ServerWithdraws = false;
             _coSigning = 0;
             _names.Clear();
             _archived.Clear();
             Roster.Clear();
             ForgetFriendsHere();
+            _fresh.Clear();
+            _backlog = null;
+            _handed.Clear();
+            _nextWithdraw = 0;
+            _withdrawn.Clear();
+            _early.Clear();
         }
 
         void ForgetFriendsHere()
@@ -343,22 +385,39 @@ namespace TavernEssentials.Social
                 Log.Warn("the server never answered the identity proof.");
                 Retry("no answer to the proof");
             }
-            if (_stage == Stage.Confirmed) ShowRecords(now);
+            if (_stage == Stage.Confirmed)
+            {
+                TakeEarly();
+                HandOver(now);
+                ShowRecords(now);
+            }
             if (_stage != Stage.Hello || !ready || Key == null || now < _nextHello) return;
-            if (_tries >= HelloTries)
+            if (_tries >= HelloTries && !_retryHello)
             {
                 _stage = Stage.Silent;
                 if (_serverFp == null)
+                {
                     Log.Msg("no TavernEssentials or TavernSocial on this server (" + HelloTries + " hellos, no answer).");
+                    Said(false);
+                }
                 else
                     Log.Warn("gave up on this server's identity check (" + (LastProblem ?? "?") + ").");
                 return;
             }
-            _tries++;
-            _nextHello = now + HelloWaits[_tries - 1];
-            Log.Detail("hello " + _tries + "/" + HelloTries + ".");
+            if (_retryHello)
+            {
+                _retryHello = false;
+                Log.Detail("hello again for a fresh challenge (" + _retries + "/" + FreshRetries + ").");
+            }
+            else
+            {
+                _tries++;
+                Log.Detail("hello " + _tries + "/" + HelloTries + ".");
+            }
+            _nextHello = now + HelloWaits[Math.Max(_tries, 1) - 1];
             Fields hello = new Fields().Add("proto", Proto.Version).Add("mod", Mod.Version);
             if (Friends) hello.Add("friends", 1);
+            if (Withdraws) hello.Add("withdraw", 1);
             _send(Proto.Hello, hello);
         }
 
@@ -374,6 +433,7 @@ namespace TavernEssentials.Social
             else if (kind == Proto.Mutual) OnMutual(body);
             else if (kind == Proto.Known) OnKnown(body);
             else if (kind == Proto.Away) OnAway(body);
+            else if (kind == Proto.Withdrawn) OnWithdrawn(body);
         }
 
         void OnChallenge(Fields c, string ownName, int ownSessionId)
@@ -418,6 +478,14 @@ namespace TavernEssentials.Social
             });
         }
 
+        void Said(bool friendsWork)
+        {
+            SaidFn said = ServerSaid;
+            if (said == null) return;
+            try { said(friendsWork); }
+            catch (Exception e) { Log.Warn("marking this server on the boards: " + e.Message); }
+        }
+
         void OnWelcome(Fields w)
         {
             if (_stage != Stage.Proved) return;
@@ -433,11 +501,14 @@ namespace TavernEssentials.Social
             _stage = Stage.Confirmed;
             ServerWitnesses = w.Get("friends") == "1";
             ServerRecognises = w.Get("mutual") == "1";
+            ServerWithdraws = Withdraws && w.Get("withdraw") == "1";
             ForgetFriendsHere();
             Log.Msg("identity " + Key.Public.Short + " confirmed by server " + Keys.Short(_serverFp) + ".");
             if (Friends)
                 Log.Msg(ServerWitnesses ? "friend cards passed here make records."
                     : "this server did not say it witnesses friend cards (TavernSocial before 0.2.1, friends off, or not ready): a card passed here may make no record.");
+            if (!ServerRecognises) Said(false);
+            else if (ServerWitnesses) Said(true);
         }
 
         void OnRoster(Fields r)
@@ -553,6 +624,13 @@ namespace TavernEssentials.Social
             FriendBook.Entry known = Book == null ? null : Book.Find(friend.Fingerprint);
             int session;
             string name, refusal;
+            if (Copies != null && Copies.IsRemoved(friend.Fingerprint, r.Ts, r.Server.Fingerprint))
+            {
+                if (!_archived.TryGetValue(friend.Fingerprint, out name)) name = Copies.RemovedName(friend.Fingerprint, r.Ts, r.Server.Fingerprint);
+                RefusalLog("this server sent back an old friend record with " + Named(name, friend.Fingerprint) + " that was removed; it is not kept."
+                    + " Make a new card on a server with TavernEssentials 0.13.0.");
+                return;
+            }
             if (!Roster.TryGetSession(friend.Fingerprint, out session))
                 refusal = "they are not identified here";
             else
@@ -565,6 +643,14 @@ namespace TavernEssentials.Social
             _names.TryGetValue(friend.Fingerprint, out name);
             if (string.IsNullOrEmpty(name) && known != null) name = known.Name;
             if (Book != null) Book.Put(r, Key.Public, name);
+            if (Copies != null) Copies.Add(RecordIndex.LiveCopy(r, friend, name));
+            if (_archived.Remove(friend.Fingerprint))
+            {
+                foreach (KeyValuePair<int, string> h in new List<KeyValuePair<int, string>>(_friendsHere))
+                    if (h.Value == friend.Fingerprint) _friendsHere.Remove(h.Key);
+                _shownAt.Remove(friend.Fingerprint);
+                _quiet.Remove(friend.Fingerprint);
+            }
             Keep(r, friend, name);
         }
 
@@ -573,7 +659,7 @@ namespace TavernEssentials.Social
             refusal = null;
             if (!Consented(session, out name))
                 refusal = "your game saw no friend card passed between you";
-            else if (_friendsHere.ContainsKey(session) && (StillHeld == null || !StillHeld(friendFp)))
+            else if (_friendsHere.ContainsKey(session) && !_archived.ContainsKey(friendFp) && (StillHeld == null || !StillHeld(friendFp)))
                 refusal = "you removed your record of them";
             return refusal == null;
         }
@@ -676,23 +762,135 @@ namespace TavernEssentials.Social
             if (!m.TryGetInt("id", out id) || fp == null || Roster.FingerprintOf(id) != fp) return;
             FriendBook.Entry f = Book == null ? null : Book.Find(fp);
             string archivedName;
-            bool archived = _archived.TryGetValue(fp, out archivedName);
-            if ((f == null && !archived) || !_shownAt.ContainsKey(fp))
+            if (_archived.TryGetValue(fp, out archivedName))
+            {
+                if (_friendsHere.ContainsKey(id)) return;
+                _friendsHere[id] = fp;
+                Log.Msg("friend " + Named(archivedName, fp) + " is here, but removed: not counted as a friend.");
+                return;
+            }
+            if (f == null || !_shownAt.ContainsKey(fp))
             {
                 Log.Warn("the server says " + Keys.Short(fp) + " is your friend here, but you hold no record with them; ignored.");
                 return;
             }
             if (_friendsHere.ContainsKey(id)) return;
             _friendsHere[id] = fp;
-            if (archived)
-            {
-                Log.Msg("friend " + Named(archivedName, fp) + " is here, but archived: not counted as a friend.");
-                return;
-            }
             string now = m.Get("name");
             bool renamed = !string.IsNullOrEmpty(now) && !string.Equals(now, f.Name, StringComparison.OrdinalIgnoreCase);
             Log.Msg("friend " + Named(f, fp) + " is here" + (renamed ? " as " + now : "")
                 + ": recognised by server " + Keys.Short(_serverFp) + ".");
+        }
+
+        void HandOver(double now)
+        {
+            if (!ServerWithdraws || Key == null || now < _nextShow || now < _nextWithdraw) return;
+            Withdrawal w = NextWithdrawal();
+            if (w == null) return;
+            _handed.Add(w.Index);
+            _nextShow = now + ShowEvery;
+            _nextWithdraw = now + WithdrawEvery;
+            Log.Detail("handing the server a removal (" + _handed.Count + " this visit).");
+            _send(Proto.Withdraw, new Fields().Add("idx", w.Index).Add("wsig", Convert.ToBase64String(w.Sig)));
+        }
+
+        Withdrawal NextWithdrawal()
+        {
+            foreach (Withdrawal w in _fresh)
+                if (StillWithdrawn(w)) return w;
+            if (_backlog == null)
+            {
+                if (Copies == null || Book == null) return null;
+                _backlog = Copies.Pending(Key.Public, Book, MaxPending);
+                _backlog.Reverse();
+            }
+            int extra = 0;
+            foreach (Withdrawal f in _fresh)
+                if (_handed.Contains(f.Index) && !_backlog.Exists(delegate(Withdrawal b) { return b.Index == f.Index; })) extra++;
+            int skip = Math.Max(0, extra + _backlog.Count - MaxPending);
+            foreach (Withdrawal w in _backlog)
+            {
+                if (skip > 0) { skip--; continue; }
+                if (StillWithdrawn(w)) return w;
+            }
+            return null;
+        }
+
+        bool StillWithdrawn(Withdrawal w)
+        {
+            return !_handed.Contains(w.Index) && (Book == null || Book.Find(w.Friend) == null);
+        }
+
+        void OnWithdrawn(Fields w)
+        {
+            if (_stage != Stage.Confirmed || !Withdraws || Key == null) return;
+            string fp = w.Get("fp"), srv = w.Get("srv");
+            byte[] sig = Keys.FromBase64(w.Get("wsig"));
+            long ts;
+            if (!Keys.LooksLikeFingerprint(fp) || !Keys.LooksLikeFingerprint(srv) || sig == null
+                || !long.TryParse(w.Get("ts"), NumberStyles.None, CultureInfo.InvariantCulture, out ts) || ts <= 0)
+            {
+                RefusalLog("the server passed on a friend's removal that does not parse; ignored.");
+                return;
+            }
+            if (Book == null || Copies == null)
+            {
+                if (_early.Count < MaxEarly) _early.Add(w);
+                return;
+            }
+            string record = fp + "|" + ts.ToString(CultureInfo.InvariantCulture) + "|" + srv;
+            if (_withdrawn.Contains(record)) return;
+
+            FriendBook.Entry live = Book.Find(fp);
+            bool isLive = live != null && live.Record.Ts == ts && live.Record.Server.Fingerprint == srv;
+            RecordCopy held = isLive ? null : Copies.Held(fp, ts, srv);
+            PublicKey friend = isLive ? live.Friend : held == null ? null : held.Friend;
+            string name = isLive ? live.Name : held == null ? null : held.Name;
+            if (friend == null)
+            {
+                Log.Detail("the server passed on a friend's removal of a record you do not hold; ignored.");
+                return;
+            }
+            if (!friend.Verify(Proto.UnfriendStatement(fp, Key.Public.Fingerprint, ts, srv), sig))
+            {
+                RefusalLog("the server passed on a removal by " + Named(name, fp) + " that they never signed; ignored.");
+                return;
+            }
+            _withdrawn.Add(record);
+
+            foreach (KeyValuePair<int, string> h in new List<KeyValuePair<int, string>>(_friendsHere))
+                if (h.Value == fp) _friendsHere.Remove(h.Key);
+            _away.Remove(fp);
+            List<KeyValuePair<long, string>> records;
+            if (isLive)
+            {
+                records = Copies.RemoveAll(fp);
+                _archived[fp] = name;
+                Book.Remove(fp);
+                _shownAt.Remove(fp);
+                _quiet.Remove(fp);
+                Log.Msg(Named(name, fp) + " removed you as a friend.");
+            }
+            else
+            {
+                records = Copies.Remove(fp, ts, srv);
+                _quiet.Add(fp);
+                Log.Msg(Named(name, fp) + " removed an older friendship record with you; it is set aside."
+                    + " The one you hold now counts again from your next visit.");
+            }
+            if (!records.Exists(delegate(KeyValuePair<long, string> r) { return r.Key == ts && r.Value == srv; }))
+                records.Add(new KeyValuePair<long, string>(ts, srv));
+            TheyRemovedFn moved = TheyRemoved;
+            try { moved(fp, records, name); }
+            catch (Exception e) { Log.Warn("setting aside the records a friend removed: " + e.Message); }
+        }
+
+        void TakeEarly()
+        {
+            if (_early.Count == 0 || Book == null || Copies == null) return;
+            List<Fields> early = new List<Fields>(_early);
+            _early.Clear();
+            foreach (Fields w in early) OnWithdrawn(w);
         }
 
         static string Named(FriendBook.Entry f, string fp)
@@ -766,6 +964,14 @@ namespace TavernEssentials.Social
         void Retry(string why)
         {
             LastProblem = why;
+            if (_retries >= FreshRetries)
+            {
+                _stage = Stage.Refused;
+                Log.Warn("gave up on this server's identity check (" + why + ", after " + FreshRetries + " fresh challenges).");
+                return;
+            }
+            _retries++;
+            _retryHello = true;
             _stage = Stage.Hello;
             _nextHello = _now;
         }

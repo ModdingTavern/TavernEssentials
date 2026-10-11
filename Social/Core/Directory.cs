@@ -9,6 +9,7 @@ namespace TavernEssentials.Social
     internal sealed class PlayerDirectory
     {
         internal const int MaxEntries = 2000;
+        internal const int MaxKeysPerLogin = 3;
         internal const long SeenEvery = 3600;
 
         internal sealed class Entry
@@ -75,19 +76,39 @@ namespace TavernEssentials.Social
         {
             if (key == null || id < 0 || string.IsNullOrEmpty(name)) return false;
             name = Clean(name);
-            Entry e = Find(key.Fingerprint);
-            if (e != null)
+            string fp = key.Fingerprint;
+            Entry e = Find(fp);
+            if (e != null && e.Id == id && e.Name == name && seen - e.Seen < SeenEvery) return false;
+            if (e == null || e.Name != name)
             {
-                bool changed = e.Id != id || e.Name != name || seen - e.Seen >= SeenEvery;
-                if (!changed) return false;
-                e.Id = id;
-                e.Name = name;
-                e.Seen = seen;
-                return true;
+                _byFp.Remove(fp);
+                MakeRoomFor(name);
+                if (_byFp.Count >= MaxEntries) Evict();
+                if (e == null) e = new Entry { Key = key };
+                _byFp[fp] = e;
             }
-            if (_byFp.Count >= MaxEntries) Evict();
-            _byFp[key.Fingerprint] = new Entry { Key = key, Id = id, Name = name, Seen = seen };
+            e.Id = id;
+            e.Name = name;
+            e.Seen = seen;
             return true;
+        }
+
+        void MakeRoomFor(string name)
+        {
+            while (true)
+            {
+                string oldest = null;
+                long at = long.MaxValue;
+                int held = 0;
+                foreach (KeyValuePair<string, Entry> kv in _byFp)
+                {
+                    if (kv.Value.Name != name) continue;
+                    held++;
+                    if (oldest == null || kv.Value.Seen < at) { at = kv.Value.Seen; oldest = kv.Key; }
+                }
+                if (held < MaxKeysPerLogin) return;
+                _byFp.Remove(oldest);
+            }
         }
 
         void Evict()

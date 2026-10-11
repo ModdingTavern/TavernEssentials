@@ -128,14 +128,39 @@ namespace TavernEssentials
             try
             {
                 byte[] bytes = File.ReadAllBytes(path);
-                string lead = bytes.Length > 0 && bytes[bytes.Length - 1] != (byte)'\n' ? "\r\n" : "";
-                File.AppendAllText(path, lead + text, new UTF8Encoding(false));
+                int bom;
+                Encoding enc = EncodingOf(bytes, out bom);
+                string had = enc.GetString(bytes, bom, bytes.Length - bom);
+                string lead = had.Length > 0 && !had.EndsWith("\n") ? "\r\n" : "";
+                byte[] add = enc.GetBytes(lead + text);
+                using (FileStream f = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read))
+                    f.Write(add, 0, add.Length);
                 notes.Add("config: added " + which + " to " + path + ", each at its default.");
             }
             catch (Exception e)
             {
                 notes.Add("config: could not add " + which + " to " + path + " (" + e.Message + "); they keep their defaults.");
             }
+        }
+
+        internal static Encoding EncodingOf(byte[] b, out int bom)
+        {
+            bom = 4;
+            if (Starts(b, 0xFF, 0xFE, 0x00, 0x00)) return new UTF32Encoding(false, false);
+            if (Starts(b, 0x00, 0x00, 0xFE, 0xFF)) return new UTF32Encoding(true, false);
+            bom = 2;
+            if (Starts(b, 0xFF, 0xFE)) return new UnicodeEncoding(false, false);
+            if (Starts(b, 0xFE, 0xFF)) return new UnicodeEncoding(true, false);
+            bom = Starts(b, 0xEF, 0xBB, 0xBF) ? 3 : 0;
+            return new UTF8Encoding(false);
+        }
+
+        static bool Starts(byte[] b, params byte[] mark)
+        {
+            if (b.Length < mark.Length) return false;
+            for (int i = 0; i < mark.Length; i++)
+                if (b[i] != mark[i]) return false;
+            return true;
         }
 
         internal static string Missing(string[] template, HashSet<string> have, List<string> added)

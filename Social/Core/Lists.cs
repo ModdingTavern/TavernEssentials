@@ -7,15 +7,24 @@ namespace TavernEssentials.Social
     internal sealed class FriendIds
     {
         internal const int First = -1000000;
+        internal const int RequestFirst = -500000000;
 
+        readonly int _first;
         readonly Dictionary<string, int> _byFp = new Dictionary<string, int>();
         readonly Dictionary<int, string> _byId = new Dictionary<int, string>();
+
+        internal FriendIds() : this(First) { }
+
+        internal FriendIds(int first)
+        {
+            _first = first;
+        }
 
         internal int IdOf(string fingerprint)
         {
             int id;
             if (_byFp.TryGetValue(fingerprint, out id)) return id;
-            id = First - _byFp.Count;
+            id = _first - _byFp.Count;
             _byFp[fingerprint] = id;
             _byId[id] = fingerprint;
             return id;
@@ -30,6 +39,11 @@ namespace TavernEssentials.Social
         internal static bool IsMadeUp(int id)
         {
             return id <= First;
+        }
+
+        internal static bool IsRequest(int id)
+        {
+            return id <= RequestFirst;
         }
     }
 

@@ -190,14 +190,37 @@ namespace TavernEssentials.Board
             return info == null || info.PlayerLimit == null ? 0 : info.PlayerLimit.Value;
         }
 
+        internal static string AddressHere()
+        {
+            DevGameServerInfo dev = JoinedHere();
+            CommunityList.Entry e = dev == null ? null : EntryFor(dev);
+            return e == null ? null : e.Address;
+        }
+
+        static CommunityList.Entry EntryFor(DevGameServerInfo dev)
+        {
+            CommunityList.Snapshot snap = CommunityList.Current;
+            return snap == null ? null : snap.ByEndpoint(dev.ConnectionInfo.Address.ToString(), dev.ConnectionInfo.GamePort);
+        }
+
+        static DevGameServerInfo JoinedHere()
+        {
+            DevGameServerInfo dev;
+            if (GameModeManager.CurrentMode is JoinedServerGameMode)
+                dev = GameModeManager.CurrentGameServerInfo as DevGameServerInfo;
+            else if (GameModeManager.CurrentMode == null && Alta.Networking.JoinedServerInfo.Current != null)
+                dev = JoinPatch.Joined;
+            else
+                return null;
+            if (dev == null || dev.ConnectionInfo == null || dev.ConnectionInfo.Address == null) return null;
+            return dev;
+        }
+
         static DevGameServerInfo ListedHere()
         {
-            if (!(GameModeManager.CurrentMode is JoinedServerGameMode)) return null;
-            DevGameServerInfo dev = GameModeManager.CurrentGameServerInfo as DevGameServerInfo;
-            if (dev == null || dev.ConnectionInfo == null || dev.ConnectionInfo.Address == null) return null;
-            CommunityList.Snapshot snap = CommunityList.Current;
-            CommunityList.Entry e = snap == null ? null
-                : snap.ByEndpoint(dev.ConnectionInfo.Address.ToString(), dev.ConnectionInfo.GamePort);
+            DevGameServerInfo dev = JoinedHere();
+            if (dev == null) return null;
+            CommunityList.Entry e = EntryFor(dev);
             if (e != null) return e.Info;
             return dev.Identifier <= -2 ? dev : null;
         }

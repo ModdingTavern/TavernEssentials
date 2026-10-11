@@ -16,6 +16,9 @@ namespace TavernEssentials
         bool _social;
         bool _board;
         bool _discord;
+        readonly TickFailures _socialFails = new TickFailures(Social.Log.Out);
+        readonly TickFailures _boardFails = new TickFailures(Board.Log.Out);
+        readonly TickFailures _discordFails = new TickFailures(Discord.Log.Out);
 
         public override void OnInitializeMelon()
         {
@@ -24,6 +27,7 @@ namespace TavernEssentials
             Bind(Board.Log.Out, log, "Board: ");
             Bind(Backend.Log.Out, log, "Backend: ");
             Bind(JoinGuard.Log.Out, log, "JoinGuard: ");
+            Bind(LogGuard.Log.Out, log, "LogGuard: ");
             Bind(Names.Log.Out, log, "Names: ");
             Bind(Postbox.Log.Out, log, "Postbox: ");
             Bind(ModSettings.Log.Out, log, "Mods: ");
@@ -42,7 +46,8 @@ namespace TavernEssentials
                     Board.Log.Msg("game client only, so it stays off on a server.");
                     Backend.Log.Msg("game client only, so it stays off on a server.");
                     ModSettings.Log.Msg("game client only, so it stays off on a server.");
-                    Discord.Log.Msg("game client only, so it stays off on a server.");
+                    Start(log, Discord.Log.Out, "Discord", null, Discord.DiscordFeature.StartServer);
+                    Start(log, LogGuard.Log.Out, "LogGuard", null, LogGuard.LogGuardFeature.Start);
                     Start(log, JoinGuard.Log.Out, "JoinGuard", null, JoinGuard.JoinGuardFeature.Start);
                     Start(log, Names.Log.Out, "Names", null, Names.NamesFeature.Start);
                     Start(log, Postbox.Log.Out, "Postbox", null, Postbox.PostboxFeature.Start);
@@ -52,6 +57,7 @@ namespace TavernEssentials
                     _board = Start(log, Board.Log.Out, "Board", "TavernBoard", Board.BoardFeature.Start);
                     Start(log, Backend.Log.Out, "Backend", null, delegate { return Backend.BackendFeature.Start(game); });
                     JoinGuard.Log.Msg("server only, so it stays off on a game client.");
+                    LogGuard.Log.Msg("server only, so it stays off on a game client.");
                     Names.Log.Msg("server only, so it stays off on a game client.");
                     Start(log, Postbox.Log.Out, "Postbox", null, Postbox.PostboxFeature.StartClient);
                     Start(log, ModSettings.Log.Out, "ModSettings", null, ModSettings.ModSettingsFeature.Start);
@@ -66,15 +72,17 @@ namespace TavernEssentials
 
         public override void OnUpdate()
         {
+            double now = UnityEngine.Time.realtimeSinceStartup;
             if (_social)
             {
                 try
                 {
                     Social.SocialFeature.Tick();
+                    _socialFails.Quiet(now);
                 }
                 catch (Exception e)
                 {
-                    Social.Log.Warn("update: " + e.Message);
+                    _socialFails.Failed(e, now);
                 }
             }
             if (_board)
@@ -82,10 +90,11 @@ namespace TavernEssentials
                 try
                 {
                     Board.BoardFeature.Tick();
+                    _boardFails.Quiet(now);
                 }
                 catch (Exception e)
                 {
-                    Board.Log.Warn("update: " + e.Message);
+                    _boardFails.Failed(e, now);
                 }
             }
             if (_discord)
@@ -93,10 +102,11 @@ namespace TavernEssentials
                 try
                 {
                     Discord.DiscordFeature.Tick();
+                    _discordFails.Quiet(now);
                 }
                 catch (Exception e)
                 {
-                    Discord.Log.Warn("update: " + e.Message);
+                    _discordFails.Failed(e, now);
                 }
             }
         }
@@ -124,6 +134,7 @@ namespace TavernEssentials
             Board.BoardConfig.Load(s);
             Backend.BackendConfig.Load(s);
             JoinGuard.JoinGuardConfig.Load(s, notes);
+            LogGuard.LogGuardConfig.Load(s, notes);
             Names.NamesConfig.Load(s);
             Postbox.PostboxConfig.Load(s);
             ModSettings.ModsConfig.Load(s);
@@ -144,6 +155,8 @@ namespace TavernEssentials
             t.AddRange(Backend.BackendConfig.Template);
             t.Add("");
             t.AddRange(JoinGuard.JoinGuardConfig.Template);
+            t.Add("");
+            t.AddRange(LogGuard.LogGuardConfig.Template);
             t.Add("");
             t.AddRange(Names.NamesConfig.Template);
             t.Add("");

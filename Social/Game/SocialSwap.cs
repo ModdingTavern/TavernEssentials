@@ -71,7 +71,7 @@ namespace TavernEssentials.Social
 
         public Task<IEnumerable<FriendshipInfo>> GetFriendsForUser(int userIdentifier)
         {
-            return Inner == null ? Empty<FriendshipInfo>() : Inner.GetFriendsForUser(userIdentifier);
+            return Empty<FriendshipInfo>();
         }
 
         public Task<IEnumerable<OculusFriendInfo>> GetOculusFriends(IEnumerable<ulong> oculusIds)

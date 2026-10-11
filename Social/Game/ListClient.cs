@@ -84,8 +84,8 @@ namespace TavernEssentials.Social
             internal string Why;
         }
 
-        const string Declined = "declined";
         static readonly FriendIds Ids = new FriendIds();
+        static readonly FriendIds RequestIds = new FriendIds(FriendIds.RequestFirst);
         static readonly Dictionary<string, string> Names = new Dictionary<string, string>();
         static readonly List<Waiting> _waiting = new List<Waiting>();
         static readonly HashSet<int> _vouched = new HashSet<int>();
@@ -166,27 +166,36 @@ namespace TavernEssentials.Social
             }
             TaskCompletionSource<bool> done = new TaskCompletionSource<bool>();
             string dir = _dir, who = Label(fp);
-            Worker.Run("archive friend", delegate
-                {
-                    string moved = FriendStore.Archive(dir, fp);
-                    if (moved != null) return moved;
-                    return FriendStore.Delete(dir, fp) ? Declined : "";
-                },
+            ClientProtocol protocol = ClientSide.Protocol;
+            KeyPair me = protocol == null ? null : protocol.Key;
+            if (me == null)
+            {
+                Log.Warn("friend " + who + ": not removed yet, your identity is still loading. Try again in a moment.");
+                done.TrySetException(new InvalidOperationException("the identity is still loading"));
+                return done.Task;
+            }
+            long now = ClientSide.UnixNow();
+            Worker.Run("remove friend", delegate { return FriendStore.Remove(dir, me, fp, now); },
                 delegate(object result, Exception error)
                 {
-                    string note = result as string;
-                    if (note == null)
+                    Removal r = result as Removal;
+                    if (r == null)
                     {
-                        Log.Error("could not archive friend " + who + ": " + (error == null ? "?" : error.GetType().Name + ": " + error.Message));
-                        done.TrySetException(error ?? new IOException("archive failed"));
+                        Log.Error("could not remove friend " + who + ": " + (error == null ? "?" : error.GetType().Name + ": " + Keys.Shorten(error.Message)));
+                        done.TrySetException(error ?? new IOException("remove failed"));
                         return;
                     }
-                    if (note == Declined) Log.Msg("friend " + who + ": declined; their archived record is deleted for good."
-                        + " Only a friend card passed again makes you friends.");
-                    else if (note.Length == 0) Log.Msg("friend " + who + ": nothing to archive or decline.");
-                    else Log.Msg("friend " + who + ": " + note + " (friends\\archived\\). Nothing was deleted and they are not told;"
-                        + " Accept in the main menu's requests list brings them back, Decline deletes it for good.");
-                    ClientSide.Archived(fp, Names.ContainsKey(fp) ? Names[fp] : null);
+                    string name = Names.ContainsKey(fp) ? Names[fp] : r.Name;
+                    if (r.Moved > 0)
+                    {
+                        Log.Msg("friend " + who + ": " + r.Moved + " record file(s) moved to friends\\removed\\, nothing deleted."
+                            + " Only a friend card passed again makes you friends.");
+                        ClientSide.Removed(fp, name, r.Made);
+                    }
+                    else if (StillCounted(fp))
+                        ClientSide.Removed(fp, name, r.Made);
+                    else
+                        Log.Msg("friend " + who + ": nothing to remove (removed already, or never a friend).");
                     done.TrySetResult(true);
                 });
             return done.Task;
@@ -215,7 +224,7 @@ namespace TavernEssentials.Social
                     Restoring r = result as Restoring;
                     if (r == null)
                     {
-                        Log.Error("could not restore friend " + who + ": " + (error == null ? "?" : error.GetType().Name + ": " + error.Message));
+                        Log.Error("could not restore friend " + who + ": " + (error == null ? "?" : error.GetType().Name + ": " + Keys.Shorten(error.Message)));
                         done.TrySetException(error ?? new IOException("restore failed"));
                         return;
                     }
@@ -245,8 +254,18 @@ namespace TavernEssentials.Social
             return fp != null && File.Exists(FriendStore.PathFor(FriendStore.ArchiveDir(_dir), fp));
         }
 
+        static bool StillCounted(string fp)
+        {
+            ClientProtocol protocol = ClientSide.Protocol;
+            if (protocol == null) return false;
+            if (protocol.Book != null && protocol.Book.Find(fp) != null) return true;
+            int session;
+            return protocol.SessionOf(fp, out session) && protocol.FingerprintHere(session) != null;
+        }
+
         static string FingerprintFor(int id)
         {
+            if (FriendIds.IsRequest(id)) return RequestIds.FingerprintOf(id);
             if (FriendIds.IsMadeUp(id)) return Ids.FingerprintOf(id);
             ClientProtocol protocol = ClientSide.Protocol;
             return protocol == null ? null : protocol.FingerprintAt(id);
@@ -275,7 +294,7 @@ namespace TavernEssentials.Social
                     _loading = false;
                     FriendLists lists = result as FriendLists;
                     if (lists == null)
-                        Log.Warn("could not read your friends folder for the game's lists: " + (error == null ? "?" : error.GetType().Name + ": " + error.Message));
+                        Log.Warn("could not read your friends folder for the game's lists: " + (error == null ? "?" : error.GetType().Name + ": " + Keys.Shorten(error.Message)));
                     else
                         foreach (string n in notes) Log.Detail(n);
                     foreach (Waiting w in batch)
@@ -316,7 +335,7 @@ namespace TavernEssentials.Social
         static IEnumerable<FriendshipInfo> ArchivedRows(FriendBook book)
         {
             List<FriendshipInfo> rows = new List<FriendshipInfo>();
-            foreach (ListRow r in ListRows.From(book, Ids.IdOf))
+            foreach (ListRow r in ListRows.From(book, RequestIds.IdOf))
             {
                 Names[r.Fingerprint] = r.Name;
                 rows.Add(Info(r.Id, r.Name, r.Ts, FriendshipType.Requested));

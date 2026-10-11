@@ -38,7 +38,8 @@ namespace TavernEssentials.Postbox
             if (!Apply(h)) return false;
             Social.ServerSide.FriendsChanged += Refresh;
             Log.Msg("ready: the friend wheel lists your mutual friends here and your friends away, and a send is checked before anything is taken"
-                + (Social.Config.Current.Friends ? "." : ". Social's friends are off (social_friends=0), so every send is refused."));
+                + (Social.Config.Current.Enabled && Social.Config.Current.Identity && Social.Config.Current.Friends
+                    ? "." : ". Social's friends are off here, so every send is refused."));
             return true;
         }
 
@@ -49,9 +50,11 @@ namespace TavernEssentials.Postbox
                 Log.Msg("switched off (postbox_enabled=0): the wheel lists only friends who are here.");
                 return false;
             }
-            if (!Social.Config.Current.Friends)
+            Social.Config social = Social.Config.Current;
+            if (!social.Enabled || !social.Identity || !social.Friends)
             {
-                Log.Msg("Social's friends are off (social_friends=0), so there are no friends away to list.");
+                Log.Msg("Social's friends are off (" + (!social.Enabled ? "social_enabled=0" : !social.Identity ? "social_identity=0" : "social_friends=0")
+                    + "), so there are no friends away to list: Postbox stays off here.");
                 return false;
             }
             HarmonyLib.Harmony h = new HarmonyLib.Harmony("tavernessentials.postbox");
@@ -69,7 +72,7 @@ namespace TavernEssentials.Postbox
                 return false;
             }
             h.Patch(read, new HarmonyMethod(typeof(PostboxFeature).GetMethod("ReadPrefix", BindingFlags.Public | BindingFlags.Static)),
-                new HarmonyMethod(typeof(PostboxFeature).GetMethod("ReadPostfix", BindingFlags.Public | BindingFlags.Static)));
+                null, null, new HarmonyMethod(typeof(PostboxFeature).GetMethod("ReadFinalizer", BindingFlags.Public | BindingFlags.Static)), null);
             return true;
         }
 
@@ -92,7 +95,7 @@ namespace TavernEssentials.Postbox
             }
         }
 
-        public static void ReadPostfix(List<UserInfo> __state)
+        public static void ReadFinalizer(List<UserInfo> __state)
         {
             if (__state == null || __state.Count == 0) return;
             try
@@ -293,9 +296,8 @@ namespace TavernEssentials.Postbox
                         if (f.Key == to) toName = f.Value;
                 if (toName == null) return "id " + to + " is not one of their friends here or away";
                 away = true;
-                int account;
-                if (Names.NamesFeature.AccountIdOf(toName.ToLowerInvariant(), out account) && account != to)
-                    return "TavernLib's account \"" + toName + "\" is id " + account + ", not " + to + ", the id they proved their key under";
+                string mismatch = Names.NamesFeature.AccountMismatch(toName.ToLowerInvariant(), to);
+                if (mismatch != null) return mismatch;
             }
             if (!Names.NamesFeature.Resolve(from, out fromName) || fromName == null) return "the sender's name is not known";
             Names.NamesFeature.Remember(from, fromName);

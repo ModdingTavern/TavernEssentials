@@ -19,13 +19,17 @@ namespace TavernEssentials.Board
 
         readonly object _gate = new object();
         readonly string _path;
+        readonly string[] _header;
         List<string> _addresses = new List<string>();
         DateTime _stamp = DateTime.MinValue;
         bool _exists;
 
-        internal JoinedServers(string path)
+        internal JoinedServers(string path) : this(path, Header) { }
+
+        internal JoinedServers(string path, string[] header)
         {
             _path = path;
+            _header = header;
         }
 
         internal string Path { get { return _path; } }
@@ -69,7 +73,7 @@ namespace TavernEssentials.Board
                 string key = Key(clean);
                 foreach (string line in lines)
                     if (Key(AddressOf(line)) == key) return false;
-                if (lines.Count == 0) lines.AddRange(Header);
+                if (lines.Count == 0) lines.AddRange(_header);
                 lines.Add(clean);
                 return Write(lines, out error);
             }
@@ -103,7 +107,7 @@ namespace TavernEssentials.Board
             {
                 Refresh();
                 if (_exists) return false;
-                List<string> lines = new List<string>(Header);
+                List<string> lines = new List<string>(_header);
                 HashSet<string> seen = new HashSet<string>();
                 foreach (string a in addresses)
                 {

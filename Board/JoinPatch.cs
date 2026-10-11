@@ -10,7 +10,18 @@ namespace TavernEssentials.Board
 {
     public static class JoinPatch
     {
-        public static bool Active;
+        static readonly object JoinedGate = new object();
+        static DevGameServerInfo _joined;
+
+        internal static DevGameServerInfo Joined
+        {
+            get { lock (JoinedGate) { return _joined; } }
+        }
+
+        static void SetJoined(DevGameServerInfo dev)
+        {
+            lock (JoinedGate) { _joined = dev; }
+        }
 
         const int DefaultSceneIndex = 0;
         const int QuestSceneIndex = 4;
@@ -37,7 +48,7 @@ namespace TavernEssentials.Board
                 h.Patch(approved, new HarmonyMethod(typeof(JoinPatch).GetMethod("ApprovedPrefix",
                     System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static)));
                 h.Patch(target.Method, null, postfix);
-                Active = true;
+                GameModeManager.ModeChanged += delegate { SetJoined(null); };
                 return true;
             }
             catch (Exception e)
@@ -123,8 +134,9 @@ namespace TavernEssentials.Board
             {
                 ServerJoinResult r;
                 try { r = orig.GetAwaiter().GetResult(); }
-                catch (Exception e) { tcs.SetException(e); return; }
+                catch (Exception e) { SetJoined(null); tcs.SetException(e); return; }
 
+                bool ok = false;
                 try
                 {
                     if (r != null && r.IsAllowed && r.ConnectionInfo != null)
@@ -138,6 +150,7 @@ namespace TavernEssentials.Board
                             r.Token = new JwtSecurityToken(a.Jwt);
                             ApplySceneIndex(dev, a.QuestScene, host);
                             Log.Msg("join: authenticated on \"" + host + "\".");
+                            ok = true;
                         }
                         else if (a.CleanFail)
                         {
@@ -158,6 +171,7 @@ namespace TavernEssentials.Board
                 {
                     Log.Warn("join auth error: " + e.Message);
                 }
+                SetJoined(ok ? dev : null);
                 tcs.SetResult(r);
             });
             t.IsBackground = true;

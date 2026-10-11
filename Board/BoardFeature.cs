@@ -24,6 +24,8 @@ namespace TavernEssentials.Board
 
             bool leaveFixed = BoardConfig.LeaveOrb && LeaveFix.Apply(h);
 
+            bool reasons = BoardConfig.JoinReasons && JoinRefusals.Apply(h);
+
             bool pagePatched = false;
             if (BoardConfig.MyServers)
             {
@@ -31,13 +33,17 @@ namespace TavernEssentials.Board
                 pagePatched = ServersPanel.Apply(h);
             }
 
+            bool marked = BoardConfig.Marks && FriendMarks.Start(h);
+
             CommunityList.Start();
             ServerNames.Listed = MyServers.NameHere;
             ServerNames.ListedLimit = MyServers.LimitHere;
             Log.Msg("ready: " + patched + "/8 list seams patched, join-auth "
                 + (BoardConfig.JoinAuth ? (joinPatched ? "on" : "FAILED") : "off") + ", leave-fix "
-                + (BoardConfig.LeaveOrb ? (leaveFixed ? "on" : "FAILED") : "off") + ", my-servers "
-                + (BoardConfig.MyServers ? (pagePatched ? "on" : "on (Servers page FAILED)") : "off") + ", list = "
+                + (BoardConfig.LeaveOrb ? (leaveFixed ? "on" : "FAILED") : "off") + ", join reasons "
+                + (BoardConfig.JoinReasons ? (reasons ? "on" : "FAILED") : "off") + ", my-servers "
+                + (BoardConfig.MyServers ? (pagePatched ? "on" : "on (Servers page FAILED)") : "off") + ", marks "
+                + (BoardConfig.Marks ? (marked ? "on" : "on (rows FAILED)") : "off") + ", list = "
                 + BoardConfig.Url + " every " + BoardConfig.RefreshSeconds + "s.");
             return true;
         }
@@ -76,6 +82,8 @@ namespace TavernEssentials.Board
         public static bool LeaveOrb = true;
         public static bool QuestScene = true;
         public static bool MyServers = true;
+        public static bool JoinReasons = true;
+        public static bool Marks = true;
 
         internal const string Prefix = "board_";
 
@@ -113,6 +121,17 @@ namespace TavernEssentials.Board
             "# joined (%APPDATA%\\TheModdingTavern\\joined_servers.txt); Leave server on the",
             "# Servers page takes one off. 0 = My Servers shows every server, like Discover.",
             "board_my_servers=1",
+            "",
+            "# 1 = when a server turns your join away, the loading screen shows its reason instead of",
+            "# \"Successfully connected to server.\", and the second refusal in a row for a reason that",
+            "# waiting will not clear takes you back to the main menu, not 24 tries over two minutes.",
+            "# 0 = the game's own line and tries.",
+            "board_join_reasons=1",
+            "",
+            "# 1 = mark the servers where your game found TavernEssentials' friends working: a * after",
+            "# the name on the boards and \"TE friends\" on the info board, from your own visits",
+            "# (%APPDATA%\\TheModdingTavern\\friend_servers.txt). Nothing is sent anywhere. 0 = no marks.",
+            "board_marks=1",
         };
 
         internal static void Load(Settings s)
@@ -126,6 +145,8 @@ namespace TavernEssentials.Board
             LeaveOrb = s.Bool("board_leave_orb", true);
             QuestScene = s.Bool("board_quest_scene", true);
             MyServers = s.Bool("board_my_servers", true);
+            JoinReasons = s.Bool("board_join_reasons", true);
+            Marks = s.Bool("board_marks", true);
             Log.Out.Verbose = Verbose;
         }
     }

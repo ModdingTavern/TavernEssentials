@@ -20,7 +20,8 @@ namespace TavernEssentials.Discord
         static Status _want;
         static JoinedServerInfo _joined;
         static long _since;
-        static string _sentSaid, _answerSaid;
+        static string _lastSent;
+        static readonly StatusLog _said = new StatusLog();
 
         internal static bool Start()
         {
@@ -45,6 +46,33 @@ namespace TavernEssentials.Discord
             return true;
         }
 
+        internal static bool StartServer()
+        {
+            if (DiscordConfig.OnServer)
+            {
+                Log.Msg("server: the game's own Discord status is left on here (discord_on_server=1).");
+                return false;
+            }
+            MethodInfo start = AccessTools.Method(typeof(DiscordController), "Start");
+            MethodInfo skip = typeof(DiscordFeature).GetMethod("SkipOnServer", BindingFlags.Public | BindingFlags.Static);
+            if (start == null || skip == null)
+            {
+                Log.Warn("server: seam missing (DiscordController.Start), so this server may still show in Discord.");
+                return false;
+            }
+            new HarmonyLib.Harmony("tavernessentials.discord").Patch(start, new HarmonyMethod(skip));
+            Log.Msg("server: the game's link to Discord stays off here, so the game you play on this PC keeps your"
+                + " Discord status (discord_on_server=0).");
+            return true;
+        }
+
+        public static bool SkipOnServer(DiscordController __instance)
+        {
+            try { __instance.enabled = false; }
+            catch (Exception) { }
+            return false;
+        }
+
         internal static void Tick()
         {
             float now = Time.realtimeSinceStartup;
@@ -53,6 +81,7 @@ namespace TavernEssentials.Discord
             Status want = Now(null);
             if (!want.Same(_want))
             {
+                if (StatusText.NewPlace(_want, want)) _nextFlag = 0f;
                 _want = want;
                 _pending = true;
             }
@@ -114,17 +143,14 @@ namespace TavernEssentials.Discord
                 activity.Secrets.Spectate = null;
                 activity.Timestamps.Start = s.Start;
                 activity.Timestamps.End = 0;
-                string said = s.Describe();
-                if (said != _sentSaid)
-                {
-                    _sentSaid = said;
-                    _answerSaid = null;
-                    Log.Msg("status: " + said + " (the game had " + game + ").");
-                }
+                _lastSent = s.Describe();
+                string line = _said.Sending(s, game);
+                if (line != null) Log.Msg(line);
+                bool told = line != null;
                 global::Discord.ActivityManager.UpdateActivityHandler theirs = callback;
                 callback = delegate(global::Discord.Result r)
                 {
-                    Answer(r);
+                    Answer(r, told);
                     if (theirs != null) theirs(r);
                 };
             }
@@ -134,16 +160,20 @@ namespace TavernEssentials.Discord
             }
         }
 
-        static void Answer(global::Discord.Result r)
+        static void Answer(global::Discord.Result r, bool told)
         {
-            string a = r.ToString();
-            if (a == _answerSaid) return;
-            _answerSaid = a;
-            if (r == global::Discord.Result.Ok) Log.Msg("Discord took it.");
-            else Log.Warn("Discord refused it: " + a + ".");
+            try
+            {
+                bool ok = r == global::Discord.Result.Ok;
+                string line = _said.Answered(told, ok, r.ToString());
+                if (line == null) return;
+                if (ok) Log.Msg(line);
+                else Log.Warn(line);
+            }
+            catch (Exception) { }
         }
 
-        internal static string LastSent { get { return _sentSaid; } }
+        internal static string LastSent { get { return _lastSent; } }
     }
 
     internal static class Log
@@ -158,11 +188,12 @@ namespace TavernEssentials.Discord
     {
         internal static bool Enabled = true;
         internal static bool Players = true;
+        internal static bool OnServer = false;
 
         internal static readonly string[] Template =
         {
             "# ---- Discord: your Discord status, through the game's own link to Discord (Alta's",
-            "# application: nothing to install or sign up for). Game client only.",
+            "# application: nothing to install or sign up for). Game client, except discord_on_server.",
             "",
             "# 1 = in a world your status names the server as the community list does (TavernLib",
             "# servers all call themselves \"Local Server\") and how long you have been there; in the",
@@ -172,12 +203,18 @@ namespace TavernEssentials.Discord
             "",
             "# 1 = with how many are on the server, as \"(3 of 10)\", when the list gives its limit.",
             "discord_players=1",
+            "",
+            "# Server only. 0 = a server started from this game folder never connects to Discord, so the",
+            "# game you play on the same PC keeps your status (a server would say \"In Menu\" for as long",
+            "# as it runs). 1 = the server connects as the game always did.",
+            "discord_on_server=0",
         };
 
         internal static void Load(Settings s)
         {
             Enabled = s.Bool("discord_status", true);
             Players = s.Bool("discord_players", true);
+            OnServer = s.Bool("discord_on_server", false);
         }
     }
 }

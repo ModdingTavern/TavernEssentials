@@ -8,6 +8,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Alta.Api.DataTransferModels.Models.Responses;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace TavernEssentials.Board
 {
@@ -56,6 +57,7 @@ namespace TavernEssentials.Board
         static readonly Dictionary<string, int> Ids = new Dictionary<string, int>();
 
         static readonly HashSet<string> WarnedHosts = new HashSet<string>();
+        static readonly HashSet<string> WarnedEntries = new HashSet<string>();
 
         static readonly object HostGate = new object();
         static readonly Dictionary<string, string> HostByEndpoint = new Dictionary<string, string>();
@@ -119,14 +121,25 @@ namespace TavernEssentials.Board
         static void FetchOnce()
         {
             string json = Download(BoardConfig.Url);
-            List<CommunityServer> raw = JsonConvert.DeserializeObject<List<CommunityServer>>(json);
+            JsonSerializerSettings asText = new JsonSerializerSettings();
+            asText.DateParseHandling = DateParseHandling.None;
+            List<JToken> raw = JsonConvert.DeserializeObject<List<JToken>>(json, asText);
             if (raw == null) throw new Exception("list deserialized to null");
 
             List<Entry> mapped = new List<Entry>();
             int skipped = 0;
-            foreach (CommunityServer entry in raw)
+            foreach (JToken t in raw)
             {
-                Entry e = Map(entry);
+                Entry e = null;
+                try
+                {
+                    e = Map(t == null || t.Type != JTokenType.Object ? null : t.ToObject<CommunityServer>());
+                }
+                catch (Exception ex)
+                {
+                    if (WarnedEntries.Add(ex.GetType().Name + ": " + ex.Message))
+                        Log.Warn("a community list entry could not be read (" + ex.GetType().Name + ": " + ex.Message + ") - skipping it.");
+                }
                 if (e != null) mapped.Add(e);
                 else skipped++;
             }
@@ -225,10 +238,11 @@ namespace TavernEssentials.Board
 
         static string BuildDescription(CommunityServer entry)
         {
-            string region = string.IsNullOrEmpty(entry.Region) ? "unknown" : entry.Region;
-            string version = string.IsNullOrEmpty(entry.Version) ? "?" : entry.Version;
+            string region = string.IsNullOrEmpty(entry.Region) ? "unknown" : FriendServers.Unmarked(entry.Region);
+            string version = string.IsNullOrEmpty(entry.Version) ? "?" : FriendServers.Unmarked(entry.Version);
             return region + " - " + version
                 + " - " + (entry.HasPassword ? "locked" : "open")
+                + (BoardConfig.Marks && FriendMarks.Marked(entry.Address) ? " - " + FriendServers.InfoMark : "")
                 + " - " + entry.Address;
         }
 
@@ -243,7 +257,7 @@ namespace TavernEssentials.Board
                 for (int i = 0; i < all.Length; i++)
                     if (all[i].AddressFamily == AddressFamily.InterNetwork) return all[i];
             }
-            catch (SocketException) { }
+            catch (Exception) { }
             return null;
         }
 

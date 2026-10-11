@@ -11,6 +11,7 @@ namespace TavernEssentials.Social
         static readonly Type Handler = ShowNames == null ? null : ShowNames.GetNestedType("NameBoardHandler", BindingFlags.NonPublic | BindingFlags.Public);
         static readonly MethodInfo Activate = Handler == null ? null : Handler.GetMethod("Activate", Any);
         static readonly MethodInfo Redraw = Handler == null ? null : Handler.GetMethod("UpdateFriendship", Any);
+        static readonly FieldInfo PlayerField = Handler == null ? null : Handler.GetField("player", Any);
         static bool _failLogged;
 
         const string Else = " A friend rejoining beside you may stay white until their name board is made again.";
@@ -18,7 +19,8 @@ namespace TavernEssentials.Social
         internal static string Missing()
         {
             return ShowNames == null ? "Alta.QuickAccessActions.ShowNames" : Handler == null ? "ShowNames.NameBoardHandler"
-                : Activate == null ? "NameBoardHandler.Activate" : Redraw == null ? "NameBoardHandler.UpdateFriendship" : null;
+                : Activate == null ? "NameBoardHandler.Activate" : Redraw == null ? "NameBoardHandler.UpdateFriendship"
+                : PlayerField == null ? "NameBoardHandler.player" : null;
         }
 
         internal static bool Apply(HarmonyLib.Harmony h)
@@ -43,7 +45,12 @@ namespace TavernEssentials.Social
 
         public static void ActivatePostfix(object __instance)
         {
-            try { Redraw.Invoke(__instance, null); }
+            try
+            {
+                UnityEngine.Object player = PlayerField.GetValue(__instance) as UnityEngine.Object;
+                if (player == null) return;
+                Redraw.Invoke(__instance, null);
+            }
             catch (Exception e)
             {
                 if (_failLogged) return;

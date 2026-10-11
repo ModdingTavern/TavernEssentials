@@ -1,6 +1,7 @@
 using System;
 using System.Globalization;
 using System.IO;
+using System.Text;
 
 namespace TavernEssentials.Social
 {
@@ -121,15 +122,22 @@ namespace TavernEssentials.Social
         internal static void WriteNew(string path, string text)
         {
             string tmp = path + ".tmp";
-            File.WriteAllText(tmp, text);
+            WriteThrough(tmp, text);
             File.Move(tmp, path);
         }
 
         internal static void WriteReplace(string path, string text, string backup)
         {
             string tmp = path + ".tmp";
-            File.WriteAllText(tmp, text);
+            WriteThrough(tmp, text);
             File.Replace(tmp, path, backup);
+        }
+
+        static void WriteThrough(string tmp, string text)
+        {
+            byte[] b = new UTF8Encoding(false).GetBytes(text);
+            using (FileStream f = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+                f.Write(b, 0, b.Length);
         }
 
         internal static string Stamp()

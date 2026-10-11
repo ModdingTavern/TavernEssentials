@@ -8,6 +8,14 @@ namespace TavernEssentials
 
         internal static Func<int> ListedLimit = null;
 
+        internal static Action<bool> FriendsWork = null;
+
+        internal static void SayFriendsWork(bool yes)
+        {
+            Action<bool> said = FriendsWork;
+            if (said != null) said(yes);
+        }
+
         internal static string Here(string gameName)
         {
             Func<string> listed = Listed;

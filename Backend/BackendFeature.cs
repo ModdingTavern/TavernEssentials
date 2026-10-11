@@ -43,6 +43,8 @@ namespace TavernEssentials.Backend
             new Seam("inbox statuses", typeof(StatusAPI), "GetStatus", new Type[0], "Statuses"),
             new Seam("inbox reports", typeof(PlayerReportsClient), "ViewAllReports",
                 new Type[] { typeof(ReportStatus?), typeof(int?) }, "NoReports"),
+            new Seam("wrist settings", typeof(ServerApiClient), "HasPermissionsInServer",
+                new Type[] { typeof(int), typeof(int), typeof(GroupPermissions[]) }, "NoPermission"),
         };
 
         internal static int Total { get { return Seams.Length; } }
@@ -65,7 +67,8 @@ namespace TavernEssentials.Backend
             int applied = Apply(h, missing);
             Log.Msg("ready: " + applied + "/" + Seams.Length + " stand-ins for Alta's dead web API"
                 + (missing.Count == 0 ? "." : "; missing: " + string.Join(", ", missing.ToArray()) + "."));
-            return applied > 0;
+            bool hidden = Achievements.Start(h);
+            return applied > 0 || hidden;
         }
 
         internal static void PickWelcome(string marker)
@@ -181,6 +184,12 @@ namespace TavernEssentials.Backend
             __result = Task.FromResult<IEnumerable<PlayerReportAdmin>>(new PlayerReportAdmin[0]);
             return false;
         }
+
+        public static bool NoPermission(ref Task<bool> __result)
+        {
+            __result = Task.FromResult(false);
+            return false;
+        }
     }
 
     internal static class Log
@@ -195,26 +204,34 @@ namespace TavernEssentials.Backend
     {
         internal static bool Enabled = true;
         internal static bool ShowWelcome = true;
+        internal static bool HideAchievements = true;
 
         internal static readonly string[] Template =
         {
             "# ---- Backend: quick answers to calls that still go to Alta's dead web API. Game client only.",
             "",
             "# 1 = answer them at once: leaving a server lands in the main menu (not a black screen), the",
-            "# customizer and the inbox open without a wait, the first join is ~7 s faster, and the",
-            "# analytics queue stops growing. 0 = the game waits on each and fails, as before.",
+            "# customizer and the inbox open without a wait, the first join is ~7 s faster, the",
+            "# analytics queue stops growing, and the wrist menu stops asking Alta on every spawn.",
+            "# 0 = the game waits on each and fails, as before.",
             "backend_enabled=1",
             "",
             "# 1 = a one-line welcome in the main menu's inbox, where Alta's news was, once",
             "# (UserData\\TavernEssentials\\welcome-seen.txt marks it done). Nothing is fetched. Needs",
             "# backend_enabled=1. 0 = the inbox stays empty.",
             "backend_welcome=1",
+            "",
+            "# 1 = hide the town's tutorial boards (Alta's achievement boards). Achievements never count on",
+            "# community servers, so every task on them stays open for good. Your view only: nothing is",
+            "# saved or sent. Needs backend_enabled=1. 0 = the boards show, as before.",
+            "backend_hide_achievements=1",
         };
 
         internal static void Load(Settings s)
         {
             Enabled = s.Bool("backend_enabled", true);
             ShowWelcome = s.Bool("backend_welcome", true);
+            HideAchievements = s.Bool("backend_hide_achievements", true);
         }
     }
 }

@@ -14,7 +14,6 @@ namespace TavernEssentials.Board
         public string Jwt;
         public bool CleanFail;
         public string Message;
-        public bool Unreachable;
         public bool QuestScene;
     }
 
@@ -36,7 +35,26 @@ namespace TavernEssentials.Board
             }
 
             bool tokenIsNew;
-            string token = TokenCache.GetOrCreate(ip, username, out tokenIsNew);
+            string unusable, damaged;
+            string token = TokenCache.GetOrCreate(ip, username, out tokenIsNew, out unusable, out damaged);
+            if (token == null)
+            {
+                res.CleanFail = true;
+                res.Message = "Your identity for \"" + host + "\" is not usable right now (" + unusable + "), so nothing was sent.";
+                return res;
+            }
+
+            if (tokenIsNew)
+            {
+                string why = TokenCache.Save(ip, username, token, damaged);
+                if (why != null)
+                {
+                    res.CleanFail = true;
+                    res.Message = "Could not save your identity for \"" + host + "\": " + why;
+                    return res;
+                }
+                Log.Msg("join: saved a new identity for \"" + host + "\" before asking it.");
+            }
 
             JObject resp;
             try
@@ -45,7 +63,6 @@ namespace TavernEssentials.Board
             }
             catch (Exception e)
             {
-                res.Unreachable = true;
                 res.Message = e.Message;
                 return res;
             }
@@ -56,7 +73,6 @@ namespace TavernEssentials.Board
                 ulong userId = 0;
                 if (resp["user_id"] != null) userId = (ulong)resp["user_id"];
                 res.QuestScene = ReadQuestScene(resp);
-                if (tokenIsNew) TokenCache.Save(ip, username, token);
                 res.Ok = true;
                 res.Jwt = Jwt.MintIdentity(userId, username, token);
                 return res;
@@ -113,10 +129,9 @@ namespace TavernEssentials.Board
                 NetworkStream s = client.GetStream();
                 s.Write(outb, 0, outb.Length);
 
-                byte[] buf = new byte[8192];
-                int n = s.Read(buf, 0, buf.Length);
-                if (n <= 0) throw new Exception("empty auth response");
-                return JObject.Parse(Encoding.UTF8.GetString(buf, 0, n));
+                string reply = Reply.ReadObject(s, Reply.Cap, TimeoutMs);
+                if (reply.Trim().Length == 0) throw new Exception("empty auth response");
+                return JObject.Parse(reply);
             }
         }
 
@@ -170,53 +185,96 @@ namespace TavernEssentials.Board
             return Path.Combine(Dir(), ".token_" + Safe(username) + ".json");
         }
 
-        public static string GetOrCreate(string host, string username, out bool isNew)
+        enum Found { None, Token, InUse, OtherName, Damaged }
+
+        public static string GetOrCreate(string host, string username, out bool isNew, out string why, out string damaged)
         {
             isNew = false;
-            string existing = ReadToken(FileFor(host, username), username);
-            if (existing != null) return existing;
-
-            string legacy = ReadToken(LegacyFileFor(username), username);
-            if (legacy != null) return legacy;
-
+            damaged = null;
+            string own = FileFor(host, username);
+            Found f;
+            string token = ReadToken(own, username, out why, out f);
+            if (f == Found.Token) return token;
+            if (f == Found.InUse || f == Found.OtherName) return null;
+            if (f == Found.Damaged) damaged = own;
+            else
+            {
+                string legacy = ReadToken(LegacyFileFor(username), username, out why, out f);
+                if (f == Found.Token) return legacy;
+                if (f == Found.InUse) return null;
+            }
+            why = null;
             isNew = true;
             return NewToken();
         }
 
-        static string ReadToken(string path, string username)
+        static string ReadToken(string path, string username, out string why, out Found found)
         {
+            why = null;
+            found = Found.None;
+            string text;
             try
             {
                 if (!File.Exists(path)) return null;
-                JObject d = JObject.Parse(File.ReadAllText(path));
-                string u = d["username"] != null ? (string)d["username"] : "";
-                string t = d["token"] != null ? (string)d["token"] : null;
-                if (!string.IsNullOrEmpty(t)
-                    && string.Equals(u, username, StringComparison.OrdinalIgnoreCase))
-                    return t;
+                text = File.ReadAllText(path);
+            }
+            catch (Exception e)
+            {
+                found = Found.InUse;
+                why = Path.GetFileName(path) + " could not be opened: " + e.Message + "; try again in a moment";
+                return null;
+            }
+            string u = null, t = null;
+            try
+            {
+                JObject d = JObject.Parse(text);
+                u = d["username"] != null ? (string)d["username"] : "";
+                t = d["token"] != null ? (string)d["token"] : null;
             }
             catch (Exception) { }
-            return null;
+            if (string.IsNullOrEmpty(t))
+            {
+                found = Found.Damaged;
+                why = Path.GetFileName(path) + " is damaged (no token in it)";
+                return null;
+            }
+            if (!string.Equals(u, username, StringComparison.OrdinalIgnoreCase))
+            {
+                found = Found.OtherName;
+                why = Path.GetFileName(path) + " holds the identity of \"" + u + "\", another name";
+                return null;
+            }
+            found = Found.Token;
+            return t;
         }
 
-        public static void Save(string host, string username, string token)
+        public static string Save(string host, string username, string token, string damaged)
         {
+            string path = FileFor(host, username);
+            string tmp = path + ".tmp";
             try
             {
                 Directory.CreateDirectory(Dir());
+                if (damaged != null && File.Exists(damaged))
+                {
+                    string kept = damaged + ".broken-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+                    File.Move(damaged, kept);
+                    Log.Warn("join: " + Path.GetFileName(damaged) + " was damaged; it is kept as " + Path.GetFileName(kept)
+                        + " and a new identity takes its place.");
+                }
+                if (File.Exists(path)) return "a token file for it appeared meanwhile";
                 JObject d = new JObject();
                 d["username"] = username;
                 d["host"] = host;
                 d["token"] = token;
-                string path = FileFor(host, username);
-                string tmp = path + ".tmp";
                 File.WriteAllText(tmp, d.ToString(Newtonsoft.Json.Formatting.None));
-                if (File.Exists(path)) File.Delete(path);
                 File.Move(tmp, path);
+                return null;
             }
             catch (Exception e)
             {
-                Log.Warn("could not persist token for \"" + host + "\": " + e.Message);
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch (Exception) { }
+                return e.Message;
             }
         }
 

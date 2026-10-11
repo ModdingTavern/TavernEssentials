@@ -30,12 +30,14 @@ namespace TavernEssentials.Social
         internal static void Boot(string identityPath, string exportPath)
         {
             _protocol = new ClientProtocol(Send, Sign);
+            _protocol.ServerSaid = ServerNames.SayFriendsWork;
             if (Config.Current.Friends)
             {
                 _friendsDir = Path.Combine(Path.GetDirectoryName(identityPath), FriendStore.Folder);
                 _protocol.Consented = Consented;
                 _protocol.Keep = Keep;
                 _protocol.StillHeld = delegate(string fp) { return File.Exists(FriendStore.PathFor(_friendsDir, fp)); };
+                _protocol.TheyRemoved = TheyRemoved;
                 if (Config.Current.Lists) GameLists.Boot(_friendsDir);
             }
             Worker.Run("identity", delegate { return KeyBoot.Run(identityPath, true, exportPath); }, KeyReady);
@@ -147,11 +149,53 @@ namespace TavernEssentials.Social
 
         internal static bool KeyFailed { get { return _keyFailed; } }
 
-        internal static void Archived(string friendFingerprint, string name)
+        internal static void Removed(string friendFingerprint, string name, List<Withdrawal> made)
         {
             if (_protocol == null) return;
-            _protocol.Archived(friendFingerprint, name);
+            _protocol.Removed(friendFingerprint, name, made);
+            Unflag(friendFingerprint);
             if (_friendsDir != null) Mark(Now());
+        }
+
+        static void Unflag(string friendFingerprint)
+        {
+            List<int> sessions = new List<int>();
+            int s;
+            if (_protocol.Roster.TryGetSession(friendFingerprint, out s)) sessions.Add(s);
+            if (_protocol.SessionOf(friendFingerprint, out s) && !sessions.Contains(s)) sessions.Add(s);
+            foreach (int session in sessions)
+            {
+                try
+                {
+                    Player p = Avatar(session, false);
+                    if (p != null && p.FriendshipManager != null && p.FriendshipManager.IsFriend) p.FriendshipManager.UpdateStatus(false);
+                }
+                catch (Exception e)
+                {
+                    Log.Warn("taking the friend mark off a removed friend: " + e.GetType().Name + ": " + Keys.Shorten(e.Message));
+                }
+            }
+        }
+
+        static void TheyRemoved(string friendFingerprint, List<KeyValuePair<long, string>> records, string name)
+        {
+            Unflag(friendFingerprint);
+            if (_friendsDir != null) Mark(Now());
+            KeyPair key = _protocol.Key;
+            if (_friendsDir == null || key == null) return;
+            string dir = _friendsDir;
+            PublicKey me = key.Public;
+            long now = UnixNow();
+            string who = (string.IsNullOrEmpty(name) ? "?" : name) + " (" + Keys.Short(friendFingerprint) + ")";
+            Worker.Run("friend removed", delegate { return FriendStore.RemoveCopies(dir, me, friendFingerprint, records, now); },
+                delegate(object result, Exception error)
+                {
+                    Removal r = result as Removal;
+                    if (r == null)
+                        Log.Error("could not set aside the records " + who + " removed: " + (error == null ? "?" : error.GetType().Name + ": " + Keys.Shorten(error.Message)));
+                    else
+                        Log.Detail(r.Moved + " record file(s) with " + who + " moved to friends\\removed\\.");
+                });
         }
 
         internal static void Restored(FriendRecord record, string name)
@@ -169,7 +213,13 @@ namespace TavernEssentials.Social
             string dir = _friendsDir;
             PublicKey me = _protocol.Key.Public;
             List<string> notes = new List<string>();
-            Worker.Run("read friends", delegate { return FriendBook.Load(dir, me, notes); },
+            RecordIndex[] copies = new RecordIndex[1];
+            Worker.Run("read friends", delegate
+                {
+                    FriendBook b = FriendBook.Load(dir, me, notes);
+                    copies[0] = RecordIndex.Load(dir, me);
+                    return b;
+                },
                 delegate(object result, Exception error)
                 {
                     _reading = false;
@@ -177,12 +227,12 @@ namespace TavernEssentials.Social
                     FriendBook book = result as FriendBook;
                     if (book == null)
                     {
-                        Log.Error("could not read your friends folder: " + (error == null ? "?" : error.GetType().Name + ": " + error.Message));
-                        _protocol.Book = new FriendBook();
+                        Log.Error("could not read your friends folder: " + (error == null ? "?" : error.GetType().Name + ": " + Keys.Shorten(error.Message)));
+                        _protocol.UseBook(new FriendBook(), new RecordIndex());
                         return;
                     }
                     foreach (string n in notes) Log.Warn(n);
-                    _protocol.UseBook(book);
+                    _protocol.UseBook(book, copies[0]);
                     Log.Detail(book.Count + " friendship record(s) read.");
                 });
         }
@@ -335,7 +385,7 @@ namespace TavernEssentials.Social
                 {
                     if (result == null)
                         Log.Error("could not save the friendship record with " + who + ": "
-                            + (error == null ? "?" : error.GetType().Name + ": " + error.Message));
+                            + (error == null ? "?" : error.GetType().Name + ": " + Keys.Shorten(error.Message)));
                     else
                         Log.Msg("friend " + who + ": record " + result + " (witnessed by server " + server + ").");
                 });
@@ -356,6 +406,11 @@ namespace TavernEssentials.Social
         internal static double Now()
         {
             return Clock.Elapsed.TotalSeconds;
+        }
+
+        internal static long UnixNow()
+        {
+            return (long)(DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
         }
 
         internal static string Status()

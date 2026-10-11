@@ -16,6 +16,9 @@ namespace TavernEssentials.Names
         static readonly HashSet<string> Missed = new HashSet<string>();
         static MethodInfo _manager;
         static bool _noAccounts;
+        static bool _accountsFailing;
+        static DateTime _accountsRetry = DateTime.MinValue;
+        const double AccountsCoolDown = 60;
 
         internal static bool Start()
         {
@@ -116,13 +119,21 @@ namespace TavernEssentials.Names
             return id >= 0;
         }
 
-        internal static bool AccountIdOf(string lowerName, out int id)
+        internal static string AccountMismatch(string lowerName, int id)
         {
-            id = -1;
             IDictionary accounts = lowerName == null ? null : Accounts();
-            if (accounts == null || !accounts.Contains(lowerName)) return false;
-            id = AccountId(accounts[lowerName]);
-            return id >= 0;
+            if (accounts == null) return null;
+            if (!accounts.Contains(lowerName)) return "TavernLib has no account \"" + lowerName + "\" any more";
+            int own = AccountId(accounts[lowerName]);
+            if (own != id)
+                return "TavernLib's account \"" + lowerName + "\" is id " + own + ", not " + id + ", the id they proved their key under";
+            foreach (DictionaryEntry a in accounts)
+            {
+                string other = a.Key as string;
+                if (AccountId(a.Value) == id && !string.Equals(other, lowerName, StringComparison.OrdinalIgnoreCase))
+                    return "TavernLib's account \"" + other + "\" holds id " + id + " too";
+            }
+            return null;
         }
 
         internal static void Remember(int id, string name)
@@ -152,7 +163,7 @@ namespace TavernEssentials.Names
 
         static IDictionary Accounts()
         {
-            if (_noAccounts) return null;
+            if (_noAccounts || DateTime.UtcNow < _accountsRetry) return null;
             try
             {
                 if (_manager == null)
@@ -169,12 +180,20 @@ namespace TavernEssentials.Names
                     _manager = get.MakeGenericMethod(manager);
                 }
                 object users = Member(Member(Member(_manager.Invoke(null, null), "UserConfig"), "LastRead"), "Users");
+                if (_accountsFailing)
+                {
+                    _accountsFailing = false;
+                    Log.Msg("TavernLib's accounts can be read again.");
+                }
                 return users as IDictionary;
             }
             catch (Exception e)
             {
-                _noAccounts = true;
-                Log.Warn("TavernLib's accounts could not be read (" + e.GetType().Name + ": " + e.Message + "); only the players here can be named.");
+                _accountsRetry = DateTime.UtcNow.AddSeconds(AccountsCoolDown);
+                if (!_accountsFailing)
+                    Log.Warn("TavernLib's accounts could not be read (" + e.GetType().Name + ": " + e.Message + "); only the players here"
+                        + " can be named until a read works (tried again after " + (int)AccountsCoolDown + " s).");
+                _accountsFailing = true;
                 return null;
             }
         }

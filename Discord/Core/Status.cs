@@ -67,6 +67,11 @@ namespace TavernEssentials.Discord
             return "att-" + h.ToString("x16", CultureInfo.InvariantCulture);
         }
 
+        internal static bool NewPlace(Status was, Status now)
+        {
+            return was == null || now == null || was.State != now.State;
+        }
+
         internal static string Named(string server)
         {
             string t = Text(server);

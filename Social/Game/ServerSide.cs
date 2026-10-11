@@ -40,7 +40,12 @@ namespace TavernEssentials.Social
         {
             _protocol = new ServerProtocol(Send);
             _protocol.FriendsChanged = Queue;
-            if (Config.Current.Friends) LoadKnown(Path.Combine(Path.GetDirectoryName(keyPath) ?? ".", "directory.txt"));
+            if (Config.Current.Friends)
+            {
+                string dir = Path.GetDirectoryName(keyPath) ?? ".";
+                LoadKnown(Path.Combine(dir, "directory.txt"));
+                LoadWithdrawals(Path.Combine(dir, WithdrawalStore.FileName));
+            }
             Worker.Run("server key", delegate { return KeyBoot.Run(keyPath, false, null); }, KeyReady);
         }
 
@@ -63,6 +68,25 @@ namespace TavernEssentials.Social
             {
                 Log.Warn("the address book " + path + " could not be read (" + e.GetType().Name + ": " + e.Message
                     + "); the postbox lists only friends who are here until a restart.");
+            }
+        }
+
+        static void LoadWithdrawals(string path)
+        {
+            try
+            {
+                WithdrawalStore w = new WithdrawalStore(path);
+                string aside;
+                int skipped = w.Load(UnixNow(), out aside);
+                if (skipped > 0)
+                    Log.Warn("the removals file had " + skipped + " line(s) that do not parse; the file as it was is kept in " + aside + ".");
+                _protocol.Withdrawals = w;
+                Log.Msg("removals: " + w.Count + " kept (" + path + ").");
+            }
+            catch (Exception e)
+            {
+                Log.Warn("the removals file " + path + " could not be read (" + e.GetType().Name + ": " + e.Message
+                    + "); friends' removals are not matched on this server until a restart.");
             }
         }
 
@@ -194,6 +218,8 @@ namespace TavernEssentials.Social
             fresh.Signer = _protocol.Signer;
             fresh.CardsReady = _protocol.CardsReady;
             fresh.Recognises = _protocol.Recognises;
+            fresh.Known = _protocol.Known;
+            fresh.Withdrawals = _protocol.Withdrawals;
             fresh.FriendsChanged = Queue;
             _protocol = fresh;
             Peers.Clear();

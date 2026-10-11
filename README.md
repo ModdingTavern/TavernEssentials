@@ -3,7 +3,7 @@
 What a modded *A Township Tale* server and its players need to get back to normal, in one
 DLL, with nothing hosted.
 
-**Status: 0.12.2.** Eight features, each with its own switch:
+**Status: 0.13.0.** Eight features, each with its own switch:
 
 - **Social**: cross-server friends. Every player gets a key, the game's own friend card works
   again, and on any server running TavernEssentials friends see each other's names in green,
@@ -11,13 +11,16 @@ DLL, with nothing hosted.
   friends list shows your friends again. Game clients and servers.
 - **Board**: the main-menu server boards fill with the community server list, eating a board
   orb joins that server, and eating the leave orb on your wrist wheel brings you back to the
-  menu. No keyboard, no trips back to the launcher. Game clients only.
+  menu. No keyboard, no trips back to the launcher. A server that turns you away says why.
+  Game clients only.
 - **Backend**: quick answers to the calls the game still makes to Alta's closed web API, where
   waiting on them hurts. Leaving a server (lost connection, kick, restart, holding Ctrl+Q)
   lands in the main menu instead of a black screen; the inbox, the customizer and your first
-  join stop waiting. The inbox shows a one-line welcome, once. Game clients only.
-- **Guard**: the server keeps its own rules. Today that is JoinGuard: a player plays under
-  the id their login token carries, or not at all. Servers only; logs by default.
+  join stop waiting. The inbox shows a one-line welcome, once. The town's tutorial boards,
+  which never tick on community servers, are hidden. Game clients only.
+- **Guard**: the server keeps its own rules. JoinGuard: a player plays under the id their login
+  token carries, or not at all (logs by default). LogGuard: players' join tokens and passwords
+  stay out of the server's logs. Servers only.
 - **Names**: the server names players from the logins here and TavernLib's accounts instead of
   asking Alta (console commands by name, the postbox, the time-trial boards). Servers only.
 - **Postbox**: send your friends items by mail. The friend wheel lists your mutual friends on
@@ -29,13 +32,15 @@ DLL, with nothing hosted.
   all call themselves "Local Server"), how many are on it and how long you have been there.
   Nothing to install. Game clients only.
 
-Social and Board were two mods, TavernSocial 0.3.0 and TavernBoard 1.0.0. TavernEssentials does exactly
-what the two did together, and keeps their files where they were.
+Social and Board began as two mods, TavernSocial 0.3.0 and TavernBoard 1.0.0. TavernEssentials
+does everything the two did, and more, and keeps their keys, friend records and tokens where
+they were.
 
 ## Install
 
-The same `TavernEssentials.dll` goes on game clients and on dedicated servers. It works out
-which it is running on.
+Download the zip from this repository's Releases page: it holds `TavernEssentials.dll`, this
+README and the licence. The same `TavernEssentials.dll` goes on game clients and on dedicated
+servers. It works out which it is running on.
 
 - **Game client:** put `TavernEssentials.dll` in the game's `Mods\` folder.
 - **Server:** put the same file in the server's `Mods\` folder and restart it. Board stays off
@@ -115,8 +120,10 @@ so neither a server nor another player can put a friendship on your disk that yo
 make. A friendship made again later keeps the older record beside the new one.
 
 On a server, Social answers the two questions the card asks the game's old social service
-(are these two friends; make them friends). Everything else that service was asked goes where
-it went before. Set `social_friends=0` to leave the card as it was.
+(are these two friends; make them friends), and answers the friends list the server asks for
+each joining player with none, at once (TavernEssentials recognises friends itself). Everything
+else that service was asked goes where it went before. Set `social_friends=0` to leave all
+three as they were.
 
 ### Friends on any server
 
@@ -146,16 +153,32 @@ The main menu's friends list shows every friend you hold a record with, by the n
 when you made it. The in-game friend lists show the same. Nobody's online status is shown:
 there is no service to ask.
 
-**Unfriend** archives the record: the file moves to `friends\archived\`. Nothing is deleted
-and nothing is sent, so the friend is not told. From your next join on you no longer show the
-record, their copy alone counts for nothing, and neither of you sees the other as a friend
-anywhere. The main menu's **requests** list shows your archived friends; **Accept** moves one
-back, any time later, and they are not told either. **Decline** deletes it for good; only a card passed again makes you friends.
+**Unfriend** removes the friend, and so do the tablet's **Remove Friend** and **Decline** in the
+main menu's requests list. Every copy of your record with them moves into
+`friends\removed\`: nothing is deleted, and no list shows that folder. Your game drops them at
+once. From then on it hands every server running TavernEssentials 0.13.0 or later that you join
+a hash of a note you signed, saying you removed that record (the note itself, which names them,
+stays with you; see Privacy). When your friend's game shows that server the same record (they
+are there with you, or they come later), the server takes it back on both sides and tells their
+game, which drops you too: your green name, the friend icon on the map, friends-only voice and
+your place on the postbox's wheel, and their menu stops listing you. Their game checks your
+signature with your key from its own copy of the record, so nobody else can end a friendship
+for you. Only a friend card passed again makes you friends, and a new card makes a new record
+that no earlier removal touches. A server older than 0.13.0 that witnessed your old friendship,
+and has not restarted since, may send the old record back for a new card; your game refuses it,
+so pass the card on a server running 0.13.0. A second Remove changes nothing.
 
-On a server, Unfriend takes effect for your game at once. If you had already shown the server
-your record there, your friend's game goes on seeing you as a friend until you leave that
-server: there is no message that takes a show back. A friend card passed again with someone
-you archived on this visit is refused until you rejoin.
+What their game learns, and when: right away if you are on the same server; otherwise when
+they next play on a server you have played on since, within 90 days of your last visit there,
+while you are still among the last 400 players that server's address book sends (see Privacy),
+and among your 20 newest removals. A friend on an older game (TavernEssentials before 0.13.0,
+TavernSocial) beside you loses you as a friend here at once (their log says you left), but
+their menu keeps you. A server before 0.13.0 keeps nothing: there your friend's game shows your
+name green until you leave, and after that lists you on its postbox wheel as a friend away, as
+before.
+
+Friends archived by an older version (0.5.0 to 0.12.x moved them to `friends\archived\`) stay in
+the requests list: **Accept** brings one back, **Decline** removes them as above.
 
 Adding friends from the menu does nothing, as before: friendships are made with the friend
 card. "Invite to Server" opens an empty window (there are no Alta server groups any more).
@@ -171,9 +194,9 @@ the fingerprint once Social has recognised them. No player ids.
 
 Tap a player:
 
-- **Remove Friend** archives them, the same as Unfriend in the menu.
-- **Add Friend** sends nothing: the page says to pass them a friend card. On a friend you
-  archived, it brings them back, like Accept.
+- **Remove Friend** removes them, the same as Unfriend in the menu.
+- **Add Friend** sends nothing: the page says to pass them a friend card. On a friend an
+  older version archived, it brings them back, like Accept.
 - **Mute** is the game's own.
 - **Report** with a reason goes to the server you are on, which fires its console event
   `SocialTabletPlayerReported` naming both players by their logins (server with
@@ -184,14 +207,16 @@ Tap a player:
 In the main menu's tab, Add as Friend and Report say where to do them instead.
 
 Rows are kept per server by the community list's name for it: TavernLib servers all tell the
-game they are "Local Server". To try a report alone, add `social_recent_test=1` to the config:
+game they are "Local Server". To try a report alone, set `social_recent_test=1` in the config:
 the page then lists a pretend player, Tester, on every server you join, and reporting them
 reaches the server, which logs it against "unknown".
 
 ### Ending a friendship by hand
 
 Deleting or moving the file in `friends\` (named by their fingerprint; the first 8 characters
-are what the log shows) does the same as Unfriend, from your next join on. No server can put
+are what the log shows) ends the friendship for your game from your next join on, but tells
+nobody: their menu keeps listing you, and a server you have both played on can still list you
+on their postbox wheel as a friend away. Unfriend is what reaches their game. No server can put
 the record back on your disk; only passing a card again does.
 
 ### How the check works
@@ -201,13 +226,16 @@ itself (by its own key), the player's session and the player's name. The client 
 the name is its own, signs the challenge, and sends it back with its public key. The server
 checks the signature, remembers which key is behind that connection, and tells everyone
 identified which session holds which key fingerprint. Each challenge can be answered once,
-within 60 seconds.
+within 60 seconds. A connection proves one key: a different key proved later on the same
+connection is refused, and the first one stays.
 
 A server names each player by the id they logged in with. A player whose game changes its
 own player id after joining (only a modified game can) is no longer identified there.
 
-This is TavernSocial's protocol, unchanged, so TavernEssentials works with TavernSocial 0.3.0
-on either side.
+This is TavernSocial's protocol with two kinds added for friends away (13 and 14, below) and
+two for removals (15 and 16), which TavernSocial ignores, so TavernEssentials works with
+TavernSocial 0.3.0 on either side. Friends away needs TavernEssentials 0.9.0 or later on
+both; a removal reaching your friend needs 0.13.0 on the server and on their game.
 
 ### Privacy
 
@@ -223,11 +251,26 @@ players learn nothing from it: only the two of you are told.
 
 A server running 0.9.0 or later keeps an address book, `UserData\TavernSocial\directory.txt`:
 the key fingerprint, public key, login id and name of every player identified there, and when
-they were last seen. Only a proof on that server writes an entry, never a name alone. On
-joining, your game gets short tags for the players in it who are not there now (a hash of the
-server's fingerprint and theirs, different on every server), and shows the server your records
-only with friends whose tag it was sent. So a server learns only friendships with players who
-have played on it.
+they were last seen. Only a proof on that server writes an entry, never a name alone. It keeps
+at most three keys per account name (a PC and a headset fit) and 2000 in all; past either, the
+ones seen longest ago go first. On joining, your game gets short tags for the players in it
+who are not there now (a hash of the server's fingerprint and theirs, different on every
+server), and shows the server your records only with friends whose tag it was sent. So a
+server learns only friendships with players who have played on it. The tags hide nothing from
+someone who already knows your fingerprint: anyone who has seen it on one server and joins
+another can work out your tag there and see whether you are among the last 400 players that
+server's book sends.
+
+A server running 0.13.0 or later also keeps the removals players hand it,
+`UserData\TavernSocial\withdrawals.txt`: for each, a hash of the signed note, the remover's key
+fingerprint and account name, their signature, and when it was first and last handed over. It
+names nobody else. The server learns who was removed only from a show of that same record (the
+friend's, or one your game made on that visit before you removed them), which tells it the
+friendship anyway; a server that already knows both fingerprints and the
+record's time and witness could confirm a guess. It keeps at most 20 a key and 20 an account
+name, 1000 in all (past that, the oldest of the account holding the most go first), each for
+90 days after its last hand-over. Your game hands every such server your 20 newest removals,
+one every 7 seconds.
 
 ### Message types
 
@@ -242,7 +285,8 @@ Game message types in use by mods, as far as we know. Tell us about yours:
 | 35 | TavernEssentials' Social (and TavernSocial before it) |
 
 Social's own kinds on type 35: 1-6 the identity exchange, 7 reserved, 8-10 friend records,
-11-12 friends here, 13 the address book's tags, 14 a friend away.
+11-12 friends here, 13 the address book's tags, 14 a friend away, 15 a removal handed to the
+server, 16 a removal passed on to the removed friend's game.
 
 ## Board: the main menu, working
 
@@ -268,8 +312,26 @@ Social's own kinds on type 35: 1-6 the identity exchange, 7 reserved, 8-10 frien
   today's list is hidden until it is back. The main menu's **Servers** page lists the same
   servers; **Leave server** there takes one off. The list is a plain text file,
   `%APPDATA%\TheModdingTavern\joined_servers.txt`, one address per line, safe to edit.
+- **Servers where friends work**: a server where your game found TavernEssentials' friends
+  working (its identity check confirmed you, and the server said it recognises friends and
+  witnesses friend cards) gets a `*` after its name on the boards, and the info board says "TE
+  friends". It is only what your own game saw on its visits: nothing is sent anywhere, the check
+  needs the server's own Social key (TavernEssentials, or TavernSocial before it), and a server
+  you have not joined is not marked. Stars at the end of a server's own name are not shown, so
+  a name cannot pass for a mark. A visit where nothing answers, or where the server says friends
+  are off, takes the mark off. The list is `%APPDATA%\TheModdingTavern\friend_servers.txt`. `board_marks=0` turns
+  the marks off.
 - **Leave orb**: the wheel's native return-to-menu orb actually returns you to the menu (grab
   it, bring it to your face, let go). Without the mod it quits the whole game.
+- **Join refusals you can read**: when a server turns your join away (a whitelist, a ban, a
+  token it will not take, JoinGuard), the game shows "Successfully connected to server." and
+  tries again every 5 seconds for two minutes, because it sends every refusal that way. With
+  TavernEssentials the loading screen shows the server's own reason ("Server refused the join:
+  ..."), and the second refusal in a row for the same reason takes you back to the main menu
+  with it. Refusals that waiting can clear (your last visit still on the server, a full server,
+  a wipe lock, a save that failed to load) keep the game's tries. This works for every join,
+  from the board or the launcher, and changes nothing on the server. `board_join_reasons=0`
+  gives the game's own line back.
 - **Quest servers**: a server running the quest overworld gets the quest overworld. The
   launcher does this by reading the server's auth response and passing `/questScene` before
   the game starts; a board join happens inside an already-running game, so the mod reads the
@@ -281,6 +343,12 @@ land in the menu with the boards live.
 Your identity for board joins is the launcher's own per-server token store
 (`%APPDATA%\TheModdingTavern\tokens`), shared both ways: servers you joined from the launcher
 already know you, and servers you first join from the board work from the launcher afterwards.
+A new identity is saved before the server first sees it, so a first join cut short (a lost
+reply, a timeout, the game closing) never costs you your name on that server. If it cannot be
+saved, the join stops there and says why. An identity file that is in use by another program,
+or holds another name's identity, stops the join too and is never touched; one that is damaged
+(empty, cut short) is kept beside it as `.broken-<time>` and a new identity takes its place.
+
 If the community list is unreachable, the boards behave exactly like the stock menu; the last
 good list stands once one has loaded. Once it has, the boards stop asking Alta's dead web API
 underneath.
@@ -299,9 +367,12 @@ the game's own offline mode would, or the way the failure already ended:
 | the main menu's inbox spins most of the time | Alta's news statuses, player reports | our welcome, once (below); no reports |
 | (log only) | "is your email verified" | yes; the only effect was a popup |
 | (log only) the analytics queue re-sends its whole history every flush | analytics events | dropped |
+| (log only) every spawn, the wrist menu asks whether you may open the server settings page | a permission check | no (what the failure already gave) |
 
 The inbox's other two calls are answered by the other features: group invites by Board (with
-`board_my_servers=1`), friend requests by Social (with `social_lists=1`).
+`board_my_servers=1`), friend requests by Social (with `social_lists=1`). On a server, Social
+answers the one call the server makes for each joining player, their friends list, with none,
+at once (TavernEssentials recognises friends itself).
 
 Where Alta's news was, the inbox gets a welcome of ours, written into the DLL (nothing is
 fetched): one line of thanks, as neither the inbox nor the popup board scrolls. The game pops
@@ -310,12 +381,21 @@ it up and keeps it in the inbox for that game; then
 the welcome does not come again. Delete that file to see it once more. `backend_welcome=0`
 leaves the inbox empty.
 
-`backend_enabled=0` leaves every one of them to fail slowly, as before.
+The town's tutorial boards (Alta's achievement boards, at Spawn, the Town Hall, the Tavern and
+the rest) never tick on a community server: the server waits on Alta's achievements API before
+it tracks anything, so every task on them stays open for good. Backend hides them, and the
+achievement popup with them, on your own screen only: nothing is saved or sent, and players
+without TavernEssentials still see them. The tutorial island's boards stay.
+`backend_hide_achievements=0` shows them.
+
+`backend_enabled=0` leaves every one of them to fail slowly, as before, and the boards show.
 
 ## Guard: the server keeps its own rules
 
-Server-side checks on what a player's game asks for, each with its own `mode` line: `log`
-first, `refuse` once the log shows only what it should. One today, in `Guard\JoinGuard\`.
+Two server-side checks, each in its own folder under `Guard\` with its own `mode` line.
+JoinGuard checks what a player's game asks for: `log` first, `refuse` once the log shows only
+what it should. LogGuard keeps join tokens and passwords out of the server's logs, on from
+the start.
 
 ### JoinGuard: your id is your own
 
@@ -330,13 +410,54 @@ JoinGuard puts the refusal back. Nothing else in the join check changes.
 - `joinguard_mode=log` (the default) lets such a join in and logs it:
   `JoinGuard: "Name" (token id 1000000004) joined as id 1000000002: another account's id. ...`
 - `joinguard_mode=refuse` turns it away with "Your game asked to join as another player.
-  Update TavernEssentials (or TavernBoard) on your PC, or join from the launcher."
+  Update TavernEssentials (or TavernBoard) on your PC, or join from the launcher." JoinGuard
+  reads the token with the same parser as TavernLib's check before it, so both see the same
+  claims. It also turns away a token that the check before it let in but that does not hold
+  exactly one id and one name, or whose id is not plain digits (no real login token has two
+  ids; one with two can get past a check that reads only the first), with "This server could
+  not read your login token. Join from the launcher." `log` logs it instead. A token nobody
+  can read is refused by TavernLib's own check already, and that refusal is left as it is.
 - `joinguard_mode=off` does not check.
+
+The first join after each server start is logged once, whatever happened to it
+(`JoinGuard: checked the first join (id 1000000004: its token's own id).`), so a guard that
+has stopped seeing joins shows as a missing line.
 
 Log first: players still on TavernEssentials 0.6.0 or older, or on TavernBoard, send the wrong
 id on every board join except to the server they launched to (fixed in 0.7.0, see Board), and
 refuse would turn them away until they update. When the log stays quiet, switch to refuse:
 set `joinguard_mode=refuse` in the server's `config.txt` and restart the server.
+
+### LogGuard: tokens stay out of the logs
+
+A player's join token works as their password on the server, and a stock TavernLib server
+writes it to its logs. LogGuard hides it, and the secrets that travel with it, before any log
+gets the line:
+
+- TavernLib's `User trying to join with JWT ...`, on every join;
+- the game's `... Credentials: ...`, on every refused join;
+- the account token and the server password in TavernLib's `With payload {...}`, on every
+  launcher login to a server started without `/launcherauth`.
+
+That covers MelonLoader's logs (`Latest.log`, `Logs\`, its console, and on docker the
+container's own log, which copies `Latest.log`), the game's `unity-log.csv` and
+`unity-error-log.csv` under the server's `Logs\logs\`, and the log events the remote console
+sends. The lines keep their words; only the secret goes:
+
+    [TavernLib.Patches.PlayerJoinFilter.FilterInvalidTokens]: User trying to join with JWT [token hidden]
+    Error: Token was for a different user: 1000000004 , PlayerId: 1000000002, Credentials: [token hidden]
+      "token": "[hidden]",
+      "password": "[hidden]"
+
+Names, ids and addresses stay. The join itself is not touched: it reads its token again on
+its own. The first token hidden after each start is logged once
+(`LogGuard: hid the first token this run, in TavernLib's log.`).
+
+It cannot clean what was written before it was installed: older `Latest.log` and `Logs\`
+files, the `unity-log` archives and old docker logs still hold the tokens of everyone who
+joined then.
+
+`logguard_mode=off` logs them as before.
 
 ## Names and the postbox: mail between friends
 
@@ -365,15 +486,18 @@ been identified on it since the server has run 0.9.0 (its address book, above). 
 the server your record with each of them, the server checks it against the key the friend
 proved there, and tells your game the friend's id on that server. The gift goes to that id's
 postbox and waits there until they next join. A send to a friend away is refused, with nothing
-taken, when anyone on the server goes by that id, or when TavernLib's account for that name
-has another id. Your friend's game needs nothing new; yours needs 0.9.0 (the wheel only shows
+taken, when anyone on the server goes by that id, or when TavernLib's accounts do not tie that
+name to exactly that id: no account for the name any more, the name under another id, or another
+account holding the id (TavernLib can hand a deleted account's id to a new player). Your friend's game needs nothing new; yours needs 0.9.0 (the wheel only shows
 ids your game counts as friends, so a small patch adds your friends away just while it reads
 them).
 
     Postbox: Alice opened a postbox: the wheel lists Bob, Carol (away).
     Postbox: Alice sends 1 item(s) to Carol, who is away (it waits in their postbox).
 
-Needs `social_friends=1` on the server and TavernEssentials on the sender's game.
+Needs Social's friends on the server (`social_enabled`, `social_identity` and `social_friends`
+all 1) and TavernEssentials on the sender's game, with the same three on there too (if one is 0,
+the game has no friends away and Postbox stays off on it).
 
 ## ModSettings: a Mods tab in the main menu
 
@@ -438,13 +562,23 @@ button is left off: it asked Alta's closed web API for the server. `discord_play
 count; `discord_status=0` gives you the game's own status back. Discord's own setting to share
 your activity still decides whether anyone sees it.
 
+The log names each new place your status goes out with (the menu, a server) and Discord's
+answer to it. What you are doing and the count change it often; those go out unlogged and are
+counted on the next place's line. Refusals from Discord are logged when they start or change,
+and the first status it takes after them says how many were refused.
+
+On a server the game's own link to Discord stays off. A PC that hosts a server and plays on
+it runs two copies of the game, and the server's would say "In Menu" for as long as it runs,
+over the status of the game you play. `discord_on_server=1` lets the server connect again.
+
 ## Settings
 
 `UserData\TavernEssentials\config.txt` in the game folder, written on the first start with
 every setting at its default, each under a line or two saying what it does. After that the
 file is never rewritten: a setting it has no line for (one a newer version brought, or a line
-you deleted) is added at the end on the next start, at its default and under its comment, and
-the log names it. Your own lines, values and comments stay as and where they are.
+you deleted) is added at the end on the next start, at its default and under its comment, in
+the file's own encoding (a file Notepad saved as Unicode stays Unicode), and the log names it.
+Your own lines, values and comments stay as and where they are.
 
 On that first start, whatever `UserData\TavernSocial\config.txt` and
 `Mods\TavernBoard_config.txt` said is carried over under the new names, and the log says so.
@@ -453,9 +587,9 @@ The old files are left as they were and not read again.
 | key | default | what |
 |---|---|---|
 | `social_enabled` | 1 | Social's switch |
-| `social_identity` | 1 | the identity check with servers running Social |
+| `social_identity` | 1 | the identity check with servers running Social; everything else in Social needs it, so 0 = Social off, like `social_enabled=0` |
 | `social_friends` | 1 | server: witness friend cards, recognise friends, map icons; client: co-sign yours and keep the records |
-| `social_lists` | 1 | client: your records in the game's friends lists, Unfriend archives, the requests list restores; friends-only voice |
+| `social_lists` | 1 | client: your records in the game's friends lists, Unfriend removes, the requests list restores what older versions archived; friends-only voice |
 | `social_recent` | 1 | client: the tablet's Recent Players page and the menu's tab from `recent.txt`, reports to the server you are on |
 | `social_recent_test` | 0 | client: 1 = Recent Players also lists a pretend player, Tester, to try a report alone |
 | `social_reports` | 1 | server: a tablet report fires `SocialTabletPlayerReported`, named by logins; Ban/Unban messages dropped |
@@ -469,20 +603,25 @@ The old files are left as they were and not read again.
 | `board_leave_orb` | 1 | leave orb returns to the menu; 0 = it quits the game |
 | `board_quest_scene` | 1 | load the quest overworld on servers that ask for it; needs `board_join_auth=1` |
 | `board_my_servers` | 1 | My Servers and the Servers page = the servers you joined; 0 = My Servers shows every server |
+| `board_join_reasons` | 1 | a server's refusal shown on the loading screen, and no two minutes of tries for one waiting will not clear; 0 = the game's own line and tries |
+| `board_marks` | 1 | a `*` after the names of servers where your game found TE's friends working, and "TE friends" on the info board; 0 = no marks |
 | `backend_enabled` | 1 | game client: answer the dead Alta calls at once; 0 = they fail slowly, as before |
 | `backend_welcome` | 1 | game client: a one-line welcome in the main menu's inbox, once (`welcome-seen.txt`); 0 = the inbox stays empty |
+| `backend_hide_achievements` | 1 | game client: hide the town's tutorial (achievement) boards and the achievement popup; your view only; 0 = they show |
 | `joinguard_mode` | log | server: `refuse`, `log` or `off` for a join whose id is not its token's |
+| `logguard_mode` | on | server: `on` hides join tokens and passwords in the logs; `off` logs them as before |
 | `names_local` | 1 | server: name players from the logins here and TavernLib's accounts; 0 = ask Alta |
 | `postbox_enabled` | 1 | server: the friend wheel (friends here and away) and the send check; client: friends away on the wheel; 0 = the game's own postbox, which loses what it sends |
 | `mods_board` | 1 | game client: the Settings Panel's fifth lever opens a Mods board; 0 = it stays padlocked |
 | `mods_hide` | (empty) | game client: mods the Mods board leaves out, by the name it shows (or the MelonPreferences category id), comma-separated |
 | `discord_status` | 1 | game client: the game's Discord status names the server, the time there, and says "In the main menu" in the menu; 0 = the game's own |
 | `discord_players` | 1 | game client: with how many are on the server, "(3 of 10)", when the list gives its limit |
+| `discord_on_server` | 0 | server: 0 = the server never connects to Discord, so the game you play on the same PC keeps your status; 1 = it connects as the game always did |
 
 A config file written by an older version gains the newer lines on the first start of the
 new one, under a line naming that version:
 
-    # Added by TavernEssentials 0.12.2: settings this file did not have yet, each at its default.
+    # Added by TavernEssentials 0.13.0: settings this file did not have yet, each at its default.
 
 A value that is not `0` or `1` (or `true`/`false`, `on`/`off`, `yes`/`no`) keeps the default
 and says so in the log.
@@ -495,13 +634,15 @@ signatures and tokens are never logged.
 
 On a client, at start, then on joining a server running Social:
 
-    Social: TavernEssentials 0.12.2 (client) starting: 3/3 seams patched, loading your identity; the game's friends lists come from your records.
     Social: recent players: 12 kept (...\tavernsocial\recent.txt).
     Social: tablet: 8/8 seams patched: recent players, the tablet's pages and the main menu's tab answer at once.
-    Board: ready: 8/8 list seams patched, join-auth on, leave-fix on, my-servers on, list = ... every 30s.
-    Backend: ready: 7/7 stand-ins for Alta's dead web API.
+    Social: TavernEssentials 0.13.0 (client) starting: 3/3 seams patched, loading your identity; the game's friends lists come from your records.
+    Board: ready: 8/8 list seams patched, join-auth on, leave-fix on, join reasons on, my-servers on, marks on, list = ... every 30s.
+    Backend: ready: 8/8 stand-ins for Alta's dead web API.
     Backend: welcome: not handed out here yet (no ...\UserData\TavernEssentials\welcome-seen.txt); the main menu's inbox shows it.
+    Backend: achievements: the town's tutorial boards are hidden here, and the achievement popup with them (backend_hide_achievements=1); nothing is saved or sent.
     JoinGuard: server only, so it stays off on a game client.
+    LogGuard: server only, so it stays off on a game client.
     Names: server only, so it stays off on a game client.
     Postbox: ready: the friend wheel also lists your friends who are away (on a server with TavernEssentials 0.9.0 or later).
     Mods: ready: the Settings Panel's padlocked fifth lever opens a Mods board with your mods' settings.
@@ -511,7 +652,7 @@ On a client, at start, then on joining a server running Social:
     Discord: status: "" / "In the main menu" (the game had "" / "In Menu").
     Discord: Discord took it.
     Board: My Servers: 3 server(s).
-    Backend: welcome: handed to the inbox; ...\UserData\TavernEssentials\welcome-seen.txt is written (0.12.2), so it shows this game only.
+    Backend: welcome: handed to the inbox; ...\UserData\TavernEssentials\welcome-seen.txt is written (0.13.0), so it shows this game only.
     Social: identity AbCdEfGh loaded in 30 ms (...); sign 13 ms, verify 0 ms, tampering caught.
     Social: the game's friends lists show your friends now (wrapped the game's SocialClient).
     Board: the main menu's Servers page lists My Servers now, with Leave server (wrapped the game's GroupsClient).
@@ -532,19 +673,26 @@ The very first start after installing 0.6.0 or later adds one line about the tok
 
 Unfriend and Accept in the menu, and Leave server:
 
-    Social: friend Bob (QrStUvWx): archived (friends\archived\). Nothing was deleted and they are not told; ...
-    Social: friend Bob (QrStUvWx): restored.
+    Social: friend Bob (QrStUvWx): 1 record file(s) moved to friends\removed\, nothing deleted. Only a friend card passed again makes you friends.
+    Social: friend Bob (QrStUvWx) removed. Their game is told on the TE servers you both visit.
+    Social: friend Carol (MnOpQrSt): restored.
     Board: My Servers: left "Some Server" (some.host:1757): it is off My Servers; joining it again puts it back.
+
+On your friend's game, when your removal reaches it:
+
+    Social: Alice (AbCdEfGh) removed you as a friend.
 
 On a server:
 
-    Social: TavernEssentials 0.12.2 (server) starting: loading the server key.
-    Social: tablet reports: ready: a report from a player's tablet fires SocialTabletPlayerReported, the reporter named by their login.
     Social: address book: 12 player(s) proved here before (...\UserData\TavernSocial\directory.txt).
+    Social: removals: 3 kept (...\UserData\TavernSocial\withdrawals.txt).
+    Social: TavernEssentials 0.13.0 (server) starting: loading the server key.
+    Social: tablet reports: ready: a report from a player's tablet fires SocialTabletPlayerReported, the reporter named by their login.
     Board: game client only, so it stays off on a server.
     Backend: game client only, so it stays off on a server.
     Mods: game client only, so it stays off on a server.
-    Discord: game client only, so it stays off on a server.
+    Discord: server: the game's link to Discord stays off here, so the game you play on this PC keeps your Discord status (discord_on_server=0).
+    LogGuard: ready: join tokens and passwords are hidden in the game's logs and TavernLib's.
     JoinGuard: ready (joinguard_mode=log): a join whose id is not its token's is logged, not refused. ...
     Names: ready: player names come from the players here and TavernLib's accounts, never Alta.
     Postbox: ready: the friend wheel lists your mutual friends here and your friends away, and a send is checked before anything is taken.
@@ -554,6 +702,7 @@ On a server:
     Social: tablet: SomePlayer (1000000003) reported Other (1000000004) for Griefing; SocialTabletPlayerReported fired.
     Social: Bob (1000000004) and SomePlayer (1000000003) are friends here: both showed their record.
     Social: SomePlayer (1000000003) and Bob (1000000004): each other's friend icon on the map.
+    Social: SomePlayer (1000000003) removed Bob (1000000004) as a friend; Bob's game was told.
 
 The first start takes a second or so longer: making a key is slow on the game's runtime. It
 happens off the main thread, so the game does not stall.
@@ -562,12 +711,13 @@ happens off the main thread, so the game does not stall.
 
 One folder per feature, one entry file each: `Social\Game\SocialFeature.cs`,
 `Board\BoardFeature.cs`, `Backend\BackendFeature.cs`, `Guard\JoinGuard\JoinGuardFeature.cs`,
-`Names\NamesFeature.cs`, `Postbox\PostboxFeature.cs`, `ModSettings\ModSettingsFeature.cs`,
-`Discord\DiscordFeature.cs`. `Main.cs` is the host. It takes the process for a server when it
-was started headless (`-batchmode`, `-nographics`) or as a server at all (`/start_server`: the
-launcher's "show game" option starts a server with a window): it reads the config, starts each
-feature that is on inside its own try/catch, and ticks them. `Shared\` holds what more than
-one feature uses; it and `Social\Core\` stay free of the game and MelonLoader.
+`Guard\LogGuard\LogGuardFeature.cs`, `Names\NamesFeature.cs`, `Postbox\PostboxFeature.cs`,
+`ModSettings\ModSettingsFeature.cs`, `Discord\DiscordFeature.cs`. `Main.cs` is the host. It
+takes the process for a server when it was started headless (`-batchmode`, `-nographics`) or
+as a server at all (`/start_server`: the launcher's "show game" option starts a server with a
+window): it reads the config, starts each feature that is on inside its own try/catch, and
+ticks them. `Shared\` holds what more than one feature uses; it and `Social\Core\` stay free
+of the game and MelonLoader.
 
 `build.ps1` compiles against your game install (set `$game` at the top) and fails on any
 warning, if the DLL ends up referencing TavernLib, or if the game's JSON library (Newtonsoft)

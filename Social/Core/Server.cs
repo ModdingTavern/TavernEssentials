@@ -42,6 +42,7 @@ namespace TavernEssentials.Social
         internal long ChallengedEntity;
         readonly MinuteBudget _challenges = new MinuteBudget();
         readonly MinuteBudget _offers = new MinuteBudget();
+        readonly MinuteBudget _withdraws = new MinuteBudget();
 
         internal PublicKey Key;
         internal int SessionId;
@@ -50,10 +51,15 @@ namespace TavernEssentials.Social
 
         internal bool Friends;
         internal bool Revoked;
+        internal bool Withdraws;
 
-        internal readonly HashSet<string> Shown = new HashSet<string>();
+        internal readonly Dictionary<string, ShownRecord> Shown = new Dictionary<string, ShownRecord>();
         internal readonly HashSet<Peer> FriendsHere = new HashSet<Peer>();
         internal bool BadShowLogged;
+
+        internal readonly HashSet<string> Told = new HashSet<string>();
+        internal int Handed;
+        internal bool BadWithdrawalLogged;
 
         internal readonly Dictionary<string, PlayerDirectory.Entry> Away = new Dictionary<string, PlayerDirectory.Entry>();
 
@@ -88,6 +94,29 @@ namespace TavernEssentials.Social
         {
             return _offers.Take(now, perMinute);
         }
+
+        internal bool TakeWithdraw(double now, int perMinute)
+        {
+            return _withdraws.Take(now, perMinute);
+        }
+    }
+
+    internal sealed class ShownRecord
+    {
+        internal readonly long Ts;
+        internal readonly string Srv;
+
+        internal ShownRecord(long ts, string srv)
+        {
+            Ts = ts;
+            Srv = srv;
+        }
+    }
+
+    internal sealed class MadeRecord
+    {
+        internal FriendRecord Record;
+        internal double At;
     }
 
     internal sealed class Offer
@@ -109,6 +138,9 @@ namespace TavernEssentials.Social
         internal const int RosterEntriesPerMessage = 60;
         internal const double OfferTtl = 20;
         internal const int OffersPerMinute = 6;
+        internal const int WithdrawsPerMinute = 12;
+        internal const double MadeTtl = 600;
+        internal const double ExpireEvery = 60;
 
         internal delegate void SendFn(Peer to, uint kind, Fields body);
         internal delegate void Signed(byte[] signature, Exception error);
@@ -119,20 +151,25 @@ namespace TavernEssentials.Social
         readonly SendFn _send;
         readonly Dictionary<int, Peer> _peers = new Dictionary<int, Peer>();
         readonly Dictionary<string, Offer> _offers = new Dictionary<string, Offer>();
-        readonly Dictionary<string, FriendRecord> _made = new Dictionary<string, FriendRecord>();
+        readonly Dictionary<string, MadeRecord> _made = new Dictionary<string, MadeRecord>();
         int _nextHandle = 1;
+        double _now;
+        double _nextExpire;
+        string _withdrawalsError;
 
         internal PublicKey Key;
         internal SignFn Signer;
         internal ReadyFn CardsReady;
         internal bool Recognises;
         internal PlayerDirectory Known;
+        internal WithdrawalStore Withdrawals;
         internal ClockFn UnixNow = DefaultUnixNow;
         internal const int KnownMax = 400;
         internal const int KnownPerMessage = 200;
         internal int Hellos, Challenges, Confirmed, Refused, Ignored;
         internal int Offered, Witnessed, Declined, Expired;
         internal int Shows, Mutuals, AwayShows;
+        internal int Deposits, Splits;
         string _knownError;
 
         internal ServerProtocol(SendFn send)
@@ -142,6 +179,7 @@ namespace TavernEssentials.Social
 
         internal int PeerCount { get { return _peers.Count; } }
         internal int OfferCount { get { return _offers.Count; } }
+        internal int MadeCount { get { return _made.Count; } }
 
         internal int BoundCount
         {
@@ -173,10 +211,12 @@ namespace TavernEssentials.Social
         internal void OnMessage(Peer p, uint kind, Fields body, int sessionId, string name, double now, long entity = 0)
         {
             if (body == null) body = new Fields();
+            _now = now;
             if (kind == Proto.Hello) OnHello(p, body, sessionId, name, now, entity);
             else if (kind == Proto.Proof) OnProof(p, body, sessionId, now);
             else if (kind == Proto.Consent) OnConsent(p, body);
             else if (kind == Proto.Show) OnShow(p, body);
+            else if (kind == Proto.Withdraw) OnWithdraw(p, body, now);
             else Ignored++;
         }
 
@@ -195,13 +235,19 @@ namespace TavernEssentials.Social
                 return;
             }
             p.Friends = hello.Get("friends") == "1";
-            p.Nonce = Keys.NewNonce();
-            p.NonceAt = now;
-            p.ChallengedId = sessionId;
-            p.ChallengedName = name;
+            p.Withdraws = hello.Get("withdraw") == "1";
+            bool again = p.Nonce != null && p.ChallengedId == sessionId && p.ChallengedName == name
+                && now - p.NonceAt <= ChallengeTtl;
+            if (!again)
+            {
+                p.Nonce = Keys.NewNonce();
+                p.NonceAt = now;
+                p.ChallengedId = sessionId;
+                p.ChallengedName = name;
+            }
             p.ChallengedEntity = entity;
             Challenges++;
-            Log.Detail(Describe(sessionId, name) + ": challenged.");
+            Log.Detail(Describe(sessionId, name) + (again ? ": challenged again (same challenge)." : ": challenged."));
             _send(p, Proto.Challenge, new Fields()
                 .Add("proto", Proto.Version)
                 .Add("nonce", p.Nonce)
@@ -209,7 +255,7 @@ namespace TavernEssentials.Social
                 .Add("srv_e", Key.ExponentBase64)
                 .Add("id", sessionId)
                 .Add("name", name)
-                .Add("ttl", (long)ChallengeTtl));
+                .Add("ttl", (long)Math.Ceiling(ChallengeTtl - (now - p.NonceAt))));
         }
 
         void OnProof(Peer p, Fields proof, int sessionId, double now)
@@ -222,6 +268,13 @@ namespace TavernEssentials.Social
                 Log.Msg(Describe(p.ChallengedId, p.ChallengedName) + ": identity refused (" + why
                     + (detail == null ? "" : ": " + detail) + ").");
                 _send(p, Proto.Reject, new Fields().Add("why", why));
+                return;
+            }
+            if (p.Bound && !p.Key.SameAs(key))
+            {
+                Refused++;
+                Log.Msg(Describe(p.SessionId, p.Name) + ": identity refused (a second key on one connection).");
+                _send(p, Proto.Reject, new Fields().Add("why", "rekey"));
                 return;
             }
             Bind(p, key);
@@ -277,8 +330,11 @@ namespace TavernEssentials.Social
                     + " (the server's social client is not wrapped): a card passed now stays in hand.");
             }
             if (Recognises) welcome.Add("mutual", 1);
+            if (Recognises && Withdrawals != null) welcome.Add("withdraw", 1);
             _send(p, Proto.Welcome, welcome);
+            if (!p.Bound) return;
             SendRoster(p, BoundOthers(p));
+            if (!p.Bound) return;
 
             Fields add = AddEntry(new Fields(), p);
             foreach (Peer o in BoundOthers(p)) _send(o, Proto.Roster, add);
@@ -364,15 +420,20 @@ namespace TavernEssentials.Social
             if (!FriendRecord.InOrder(pa.Key, pb.Key)) { pa = y; pb = x; }
             string pair = pa.Key.Fingerprint + "|" + pb.Key.Fingerprint;
 
-            FriendRecord made;
+            _now = now;
+            MadeRecord made;
             if (_made.TryGetValue(pair, out made))
             {
-                SendRecord(pa, made);
-                SendRecord(pb, made);
-                Log.Detail(Describe(pa.SessionId, pa.Name) + " and " + Describe(pb.SessionId, pb.Name)
-                    + ": friends already; their record went out again.");
-                why = null;
-                return true;
+                if (now - made.At <= MadeTtl)
+                {
+                    SendRecord(pa, made.Record);
+                    SendRecord(pb, made.Record);
+                    Log.Detail(Describe(pa.SessionId, pa.Name) + " and " + Describe(pb.SessionId, pb.Name)
+                        + ": friends already; their record went out again.");
+                    why = null;
+                    return true;
+                }
+                _made.Remove(pair);
             }
             foreach (Offer pending in _offers.Values)
                 if (pending.Pair == pair) { why = null; return true; }
@@ -476,7 +537,7 @@ namespace TavernEssentials.Social
             r.ASig = o.ASig;
             r.BSig = o.BSig;
             r.ServerSig = o.ServerSig;
-            _made[o.Pair] = r;
+            _made[o.Pair] = new MadeRecord { Record = r, At = _now };
             Witnessed++;
             int sent = (SendRecord(o.PA, r) ? 1 : 0) + (SendRecord(o.PB, r) ? 1 : 0);
             Log.Msg("witnessed " + o.PA.Name + " (" + o.A.Short + ") and " + o.PB.Name + " (" + o.B.Short
@@ -510,6 +571,17 @@ namespace TavernEssentials.Social
 
         internal void Tick(double now)
         {
+            _now = now;
+            TickRemovals(now);
+            List<string> stale = null;
+            foreach (KeyValuePair<string, MadeRecord> kv in _made)
+                if (now - kv.Value.At > MadeTtl)
+                {
+                    if (stale == null) stale = new List<string>();
+                    stale.Add(kv.Key);
+                }
+            if (stale != null) foreach (string pair in stale) _made.Remove(pair);
+
             List<Offer> late = null;
             foreach (Offer o in _offers.Values)
                 if (now > o.Deadline)
@@ -559,8 +631,9 @@ namespace TavernEssentials.Social
                 p.BadShowLogged = true;
                 return;
             }
-            p.Shown.Add(fp);
-            if (!friend.Shown.Contains(p.Key.Fingerprint) || p.FriendsHere.Contains(friend)) return;
+            if (ShowWithdrawn(p, fp, friend.Key, ts, srv)) return;
+            p.Shown[fp] = new ShownRecord(ts, srv);
+            if (!friend.Shown.ContainsKey(p.Key.Fingerprint) || p.FriendsHere.Contains(friend)) return;
 
             p.FriendsHere.Add(friend);
             friend.FriendsHere.Add(p);
@@ -568,6 +641,7 @@ namespace TavernEssentials.Social
             Log.Msg(Describe(p.SessionId, p.Name) + " and " + Describe(friend.SessionId, friend.Name)
                 + " are friends here: both showed their record.");
             _send(p, Proto.Mutual, MutualBody(friend));
+            if (!p.Bound || !friend.Bound) return;
             _send(friend, Proto.Mutual, MutualBody(p));
             Changed(p);
             Changed(friend);
@@ -612,7 +686,8 @@ namespace TavernEssentials.Social
                 p.BadShowLogged = true;
                 return;
             }
-            p.Shown.Add(fp);
+            if (ShowWithdrawn(p, fp, e.Key, ts, srv)) return;
+            p.Shown[fp] = new ShownRecord(ts, srv);
             if (p.Away.ContainsKey(fp)) return;
             p.Away[fp] = e;
             AwayShows++;
@@ -627,7 +702,7 @@ namespace TavernEssentials.Social
             if (e == null || BoundWith(fp) != null) return;
             foreach (Peer o in BoundOthers(null))
             {
-                if (!o.Shown.Contains(fp) || o.Away.ContainsKey(fp)) continue;
+                if (!o.Shown.ContainsKey(fp) || o.Away.ContainsKey(fp)) continue;
                 o.Away[fp] = e;
                 _send(o, Proto.Away, AwayBody(fp, e));
                 Changed(o);
@@ -649,6 +724,130 @@ namespace TavernEssentials.Social
             foreach (KeyValuePair<string, PlayerDirectory.Entry> kv in p.Away)
                 if (BoundWith(kv.Key) == null) list.Add(kv.Value);
             return list;
+        }
+
+        void OnWithdraw(Peer p, Fields w, double now)
+        {
+            if (Withdrawals == null || !p.Bound) { Ignored++; return; }
+            if (!p.TakeWithdraw(now, WithdrawsPerMinute))
+            {
+                Ignored++;
+                Log.Detail(Describe(p.SessionId, p.Name) + ": a removal ignored, too many this minute.");
+                return;
+            }
+            string mine = p.Key.Fingerprint;
+            WithdrawalStore.Line line = Withdrawals.Deposit(mine, p.Name, w.Get("idx"), Keys.FromBase64(w.Get("wsig")), UnixNow());
+            if (line == null) { Ignored++; return; }
+            Deposits++;
+            p.Handed++;
+            Log.Detail(Describe(p.SessionId, p.Name) + " handed over " + p.Handed + " removal(s).");
+
+            foreach (Peer o in BoundOthers(p))
+            {
+                ShownRecord r;
+                if (!p.Bound) return;
+                if (!o.Bound || !o.Shown.TryGetValue(mine, out r)) continue;
+                WithdrawalStore.Line found = Withdrawn(mine, p.Key, o.Key.Fingerprint, r.Ts, r.Srv, p);
+                if (found != null) Split(mine, p, o.Key.Fingerprint, o, found, r.Ts, r.Srv);
+            }
+            if (!p.Bound) return;
+            foreach (KeyValuePair<string, ShownRecord> kv in new List<KeyValuePair<string, ShownRecord>>(p.Shown))
+            {
+                if (!p.Bound) return;
+                WithdrawalStore.Line found = Withdrawn(mine, p.Key, kv.Key, kv.Value.Ts, kv.Value.Srv, p);
+                if (found != null) Split(mine, p, kv.Key, null, found, kv.Value.Ts, kv.Value.Srv);
+            }
+        }
+
+        bool ShowWithdrawn(Peer p, string fp, PublicKey key, long ts, string srv)
+        {
+            WithdrawalStore.Line line = Withdrawn(fp, key, p.Key.Fingerprint, ts, srv, p);
+            if (line == null) return false;
+            Split(fp, null, p.Key.Fingerprint, p, line, ts, srv);
+            return true;
+        }
+
+        WithdrawalStore.Line Withdrawn(string remover, PublicKey removerKey, string friend, long ts, string srv, Peer logFor)
+        {
+            if (Withdrawals == null || removerKey == null) return null;
+            WithdrawalStore.Line line = Withdrawals.Find(remover, Proto.UnfriendIndex(remover, friend, ts, srv), UnixNow());
+            if (line == null) return null;
+            if (removerKey.Verify(Proto.UnfriendStatement(remover, friend, ts, srv), line.Sig)) return line;
+            if (logFor != null && !logFor.BadWithdrawalLogged)
+                Log.Warn("a removal kept for " + Keys.Short(remover) + " does not verify against their key; ignored.");
+            if (logFor != null) logFor.BadWithdrawalLogged = true;
+            return null;
+        }
+
+        void Split(string aFp, Peer a, string bFp, Peer b, WithdrawalStore.Line line, long ts, string srv)
+        {
+            if (a == null) a = BoundWith(aFp);
+            if (b == null) b = BoundWith(bFp);
+            bool aChanged = false, bChanged = false;
+            if (b != null)
+            {
+                bChanged |= b.Shown.Remove(aFp);
+                bChanged |= b.Away.Remove(aFp);
+                if (a != null) bChanged |= b.FriendsHere.Remove(a);
+            }
+            if (a != null)
+            {
+                aChanged |= a.Shown.Remove(bFp);
+                aChanged |= a.Away.Remove(bFp);
+                if (b != null) aChanged |= a.FriendsHere.Remove(b);
+            }
+            _made.Remove(string.CompareOrdinal(aFp, bFp) < 0 ? aFp + "|" + bFp : bFp + "|" + aFp);
+            if (aChanged) Changed(a);
+            if (bChanged) Changed(b);
+            if (b == null || !b.Told.Add(line.Depositor + "|" + line.Index)) return;
+
+            Splits++;
+            string remover = a != null ? Describe(a.SessionId, a.Name) : AwayName(aFp);
+            string friend = Describe(b.SessionId, b.Name);
+            if (b.Withdraws)
+            {
+                _send(b, Proto.Withdrawn, new Fields()
+                    .Add("fp", aFp)
+                    .Add("ts", ts)
+                    .Add("srv", srv)
+                    .Add("wsig", Convert.ToBase64String(line.Sig)));
+                Log.Msg(remover + " removed " + friend + " as a friend; " + (b.Name ?? "?") + "'s game was told.");
+            }
+            else if (a != null && a.Bound)
+            {
+                _send(b, Proto.Roster, new Fields().Add("del", a.SessionId));
+                Log.Msg(remover + " removed " + friend + " as a friend; " + (b.Name ?? "?") + "'s game is older: dropped from friends here.");
+            }
+            else
+                Log.Msg(remover + " removed " + friend + " as a friend; " + (b.Name ?? "?") + "'s game is older and is not told; their show of it is refused.");
+        }
+
+        string AwayName(string fp)
+        {
+            PlayerDirectory.Entry e = Known == null ? null : Known.Find(fp);
+            return e == null ? "a player away (" + Keys.Short(fp) + ")" : Describe(e.Id, e.Name);
+        }
+
+        void TickRemovals(double now)
+        {
+            if (Withdrawals == null) return;
+            if (now >= _nextExpire)
+            {
+                _nextExpire = now + ExpireEvery;
+                Withdrawals.Expire(UnixNow());
+            }
+            string error = Withdrawals.SaveIfDue(now);
+            if (error != null)
+            {
+                if (error != _withdrawalsError)
+                    Log.Warn("could not save the removals file " + Withdrawals.Path + " (" + error + "); they are kept in memory.");
+                _withdrawalsError = error;
+            }
+            else if (_withdrawalsError != null && !Withdrawals.Dirty)
+            {
+                Log.Msg("the removals file saved again.");
+                _withdrawalsError = null;
+            }
         }
 
         static long DefaultUnixNow()
@@ -697,7 +896,8 @@ namespace TavernEssentials.Social
                 + ", challenges " + Challenges + ", confirmed " + Confirmed + ", refused " + Refused
                 + ", ignored " + Ignored + "; friend cards: offered " + Offered + ", witnessed " + Witnessed
                 + ", declined " + Declined + ", expired " + Expired + "; friends here: shown " + Shows + ", mutual " + Mutuals
-                + (Known == null ? "" : "; address book " + Known.Count + ", friends away shown " + AwayShows);
+                + (Known == null ? "" : "; address book " + Known.Count + ", friends away shown " + AwayShows)
+                + (Withdrawals == null ? "" : "; removals kept " + Withdrawals.Count + ", handed over " + Deposits + ", split " + Splits);
         }
     }
 }

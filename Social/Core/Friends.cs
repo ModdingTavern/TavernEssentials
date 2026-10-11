@@ -139,6 +139,7 @@ namespace TavernEssentials.Social
     {
         internal const string Folder = "friends";
         internal const string ArchiveFolder = "archived";
+        internal const string RemovedFolder = "removed";
         internal const string Extension = ".txt";
 
         static readonly object Gate = new object();
@@ -158,25 +159,9 @@ namespace TavernEssentials.Social
             return Path.Combine(dir, ArchiveFolder);
         }
 
-        internal static string Archive(string dir, string friendFingerprint)
+        internal static string RemovedDir(string dir)
         {
-            lock (Gate)
-            {
-                string from = PathFor(dir, friendFingerprint);
-                if (!File.Exists(from)) return null;
-                string archive = ArchiveDir(dir);
-                Directory.CreateDirectory(archive);
-                string to = PathFor(archive, friendFingerprint);
-                string note = "archived";
-                if (File.Exists(to))
-                {
-                    string kept = FreeName(archive, friendFingerprint + ".replaced-" + KeyStore.Stamp(), Extension);
-                    File.Move(to, kept);
-                    note = "archived; the one archived before is kept as " + Path.GetFileName(kept);
-                }
-                File.Move(from, to);
-                return note;
-            }
+            return Path.Combine(dir, RemovedFolder);
         }
 
         internal static string Restore(string dir, string friendFingerprint)
@@ -198,15 +183,112 @@ namespace TavernEssentials.Social
             }
         }
 
-        internal static bool Delete(string dir, string friendFingerprint)
+        internal static Removal Remove(string dir, KeyPair me, string friendFingerprint, long now)
         {
-            lock (Gate)
+            lock (Gate) return Move(dir, me.Public, friendFingerprint, null, me, now);
+        }
+
+        internal static Removal RemoveCopies(string dir, PublicKey me, string friendFingerprint, List<KeyValuePair<long, string>> records, long now)
+        {
+            Predicate<RecordCopy> which = delegate(RecordCopy c) { return records.Contains(new KeyValuePair<long, string>(c.Ts, c.Server)); };
+            lock (Gate) return Move(dir, me, friendFingerprint, which, null, now);
+        }
+
+        static Removal Move(string dir, PublicKey me, string friendFingerprint, Predicate<RecordCopy> which, KeyPair signer, long now)
+        {
+            Removal r = new Removal();
+            List<RecordCopy> found = new List<RecordCopy>();
+            Collect(dir, me, friendFingerprint, true, found);
+            Collect(ArchiveDir(dir), me, friendFingerprint, false, found);
+            if (which != null) found.RemoveAll(delegate(RecordCopy c) { return !which(c); });
+            if (found.Count == 0) return r;
+            found.Sort(delegate(RecordCopy x, RecordCopy y)
             {
-                string path = PathFor(ArchiveDir(dir), friendFingerprint);
-                if (!File.Exists(path)) return false;
-                File.Delete(path);
-                return true;
+                if (x.Live != y.Live) return x.Live ? -1 : 1;
+                return string.CompareOrdinal(x.Path, y.Path);
+            });
+
+            string removed = RemovedDir(dir);
+            Directory.CreateDirectory(removed);
+            Dictionary<string, byte[]> signed = new Dictionary<string, byte[]>();
+            foreach (RecordCopy c in found)
+            {
+                byte[] sig = null;
+                string record = c.Ts.ToString(CultureInfo.InvariantCulture) + "|" + c.Server;
+                if (signer != null && !signed.TryGetValue(record, out sig))
+                {
+                    sig = signer.Sign(Proto.UnfriendStatement(me.Fingerprint, c.FriendFp, c.Ts, c.Server));
+                    signed[record] = sig;
+                }
+                Fields f = c.Record.ToFields();
+                if (!string.IsNullOrEmpty(c.Name)) f.Add("name", c.Name);
+                f.Add("share", 0);
+                if (sig != null) f.Add("wsig", Convert.ToBase64String(sig));
+                f.Add("removed", now);
+                if (signer == null) f.Add("removed_by", "them");
+
+                string to = PathFor(removed, c.FriendFp);
+                if (File.Exists(to)) to = FreeName(removed, c.FriendFp + ".replaced-" + KeyStore.Stamp(), Extension);
+                KeyStore.WriteNew(to, f.Encode());
+                File.Delete(c.Path);
+
+                RecordCopy moved = new RecordCopy();
+                moved.Path = to;
+                moved.Friend = c.Friend;
+                moved.Ts = c.Ts;
+                moved.Server = c.Server;
+                moved.Name = c.Name;
+                moved.Record = c.Record;
+                moved.Removed = true;
+                moved.Sig = sig;
+                moved.RemovedAt = now;
+                r.Moved++;
+                if (!string.IsNullOrEmpty(c.Name) && (r.Name == null || c.Live)) r.Name = c.Name;
+                Withdrawal w = sig == null ? null : RecordIndex.Withdrawn(me, moved);
+                if (w != null && !r.Made.Exists(delegate(Withdrawal x) { return x.Index == w.Index; })) r.Made.Add(w);
             }
+            return r;
+        }
+
+        static void Collect(string folder, PublicKey me, string friendFingerprint, bool friends, List<RecordCopy> into)
+        {
+            if (!Directory.Exists(folder)) return;
+            foreach (string path in Directory.GetFiles(folder, "*" + Extension))
+            {
+                RecordCopy c = ReadCopy(path, me);
+                if (c == null || c.FriendFp != friendFingerprint) continue;
+                c.Live = friends && IsLiveName(path);
+                into.Add(c);
+            }
+        }
+
+        internal static bool IsLiveName(string path)
+        {
+            return Keys.LooksLikeFingerprint(Path.GetFileNameWithoutExtension(path));
+        }
+
+        internal static RecordCopy ReadCopy(string path, PublicKey me)
+        {
+            string text;
+            try { text = File.ReadAllText(path); }
+            catch (Exception) { return null; }
+            string why;
+            Fields f = Fields.Decode((text ?? "").Replace("\r\n", "\n"), out why);
+            if (f == null) return null;
+            FriendRecord r = FriendRecord.FromFields(f, out why);
+            PublicKey friend = r == null ? null : r.Other(me);
+            if (friend == null) return null;
+            RecordCopy c = new RecordCopy();
+            c.Path = path;
+            c.Record = r;
+            c.Friend = friend;
+            c.Ts = r.Ts;
+            c.Server = r.Server.Fingerprint;
+            c.Name = f.Get("name");
+            c.Sig = Keys.FromBase64(f.Get("wsig"));
+            long at;
+            if (long.TryParse(f.Get("removed"), NumberStyles.None, CultureInfo.InvariantCulture, out at)) c.RemovedAt = at;
+            return c;
         }
 
         internal static string Save(string dir, FriendRecord r, PublicKey friend, string name)
