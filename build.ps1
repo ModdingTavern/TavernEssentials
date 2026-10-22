@@ -22,7 +22,7 @@ $refs += "/r:$(Join-Path $ml 'MelonLoader.dll')"
 $refs += "/r:$(Join-Path $ml '0Harmony.dll')"
 
 $src = @(Join-Path $here 'Main.cs')
-foreach ($dir in @('Shared', 'Social', 'Board', 'Backend', 'Guard', 'Names', 'Postbox', 'ModSettings', 'Discord')) {
+foreach ($dir in @('Shared', 'Social', 'Board', 'Backend', 'Guard', 'Names', 'Postbox', 'SettingsBoard', 'ModSettings', 'Discord')) {
     $src += @(Get-ChildItem (Join-Path $here $dir) -Recurse -Filter '*.cs' | ForEach-Object { $_.FullName })
 }
 

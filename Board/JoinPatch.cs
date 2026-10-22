@@ -23,9 +23,6 @@ namespace TavernEssentials.Board
             lock (JoinedGate) { _joined = dev; }
         }
 
-        const int DefaultSceneIndex = 0;
-        const int QuestSceneIndex = 4;
-
         public static bool Apply(HarmonyLib.Harmony h)
         {
             MethodInfoWrap target = Find();
@@ -148,7 +145,7 @@ namespace TavernEssentials.Board
                         if (a.Ok)
                         {
                             r.Token = new JwtSecurityToken(a.Jwt);
-                            ApplySceneIndex(dev, a.QuestScene, host);
+                            ApplySceneIndex(dev, a.Scene, host);
                             Log.Msg("join: authenticated on \"" + host + "\".");
                             ok = true;
                         }
@@ -180,14 +177,11 @@ namespace TavernEssentials.Board
             return tcs.Task;
         }
 
-        static void ApplySceneIndex(DevGameServerInfo dev, bool questScene, string host)
+        static void ApplySceneIndex(DevGameServerInfo dev, int scene, string host)
         {
             if (!BoardConfig.QuestScene) return;
-            int want = questScene ? QuestSceneIndex : DefaultSceneIndex;
-            if (dev.SceneIndex == want) return;
-            dev.SceneIndex = want;
-            Log.Msg("join: \"" + host + "\" wants scene " + want
-                + (questScene ? " (quest overworld)." : " (standard overworld)."));
+            if (dev.SceneIndex != scene) dev.SceneIndex = scene;
+            Log.Msg("join: \"" + host + "\" runs the " + Scenes.Name(scene) + " (scene " + scene + ").");
         }
     }
 }

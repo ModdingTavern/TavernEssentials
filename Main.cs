@@ -30,6 +30,7 @@ namespace TavernEssentials
             Bind(LogGuard.Log.Out, log, "LogGuard: ");
             Bind(Names.Log.Out, log, "Names: ");
             Bind(Postbox.Log.Out, log, "Postbox: ");
+            Bind(SettingsBoard.Log.Out, log, "SettingsBoard: ");
             Bind(ModSettings.Log.Out, log, "Mods: ");
             Bind(Discord.Log.Out, log, "Discord: ");
             try
@@ -51,6 +52,7 @@ namespace TavernEssentials
                     Start(log, JoinGuard.Log.Out, "JoinGuard", null, JoinGuard.JoinGuardFeature.Start);
                     Start(log, Names.Log.Out, "Names", null, Names.NamesFeature.Start);
                     Start(log, Postbox.Log.Out, "Postbox", null, Postbox.PostboxFeature.Start);
+                    Start(log, SettingsBoard.Log.Out, "SettingsBoard", null, SettingsBoard.SettingsBoardFeature.StartServer);
                 }
                 else
                 {
@@ -60,6 +62,7 @@ namespace TavernEssentials
                     LogGuard.Log.Msg("server only, so it stays off on a game client.");
                     Names.Log.Msg("server only, so it stays off on a game client.");
                     Start(log, Postbox.Log.Out, "Postbox", null, Postbox.PostboxFeature.StartClient);
+                    Start(log, SettingsBoard.Log.Out, "SettingsBoard", null, SettingsBoard.SettingsBoardFeature.StartClient);
                     Start(log, ModSettings.Log.Out, "ModSettings", null, ModSettings.ModSettingsFeature.Start);
                     _discord = Start(log, Discord.Log.Out, "Discord", null, Discord.DiscordFeature.Start);
                 }
@@ -137,6 +140,7 @@ namespace TavernEssentials
             LogGuard.LogGuardConfig.Load(s, notes);
             Names.NamesConfig.Load(s);
             Postbox.PostboxConfig.Load(s);
+            SettingsBoard.SettingsBoardConfig.Load(s);
             ModSettings.ModsConfig.Load(s);
             Discord.DiscordConfig.Load(s);
             foreach (string n in notes) log.Msg(n);
@@ -161,6 +165,8 @@ namespace TavernEssentials
             t.AddRange(Names.NamesConfig.Template);
             t.Add("");
             t.AddRange(Postbox.PostboxConfig.Template);
+            t.Add("");
+            t.AddRange(SettingsBoard.SettingsBoardConfig.Template);
             t.Add("");
             t.AddRange(ModSettings.ModsConfig.Template);
             t.Add("");

@@ -14,7 +14,7 @@ namespace TavernEssentials.Board
         public string Jwt;
         public bool CleanFail;
         public string Message;
-        public bool QuestScene;
+        public int Scene;
     }
 
     static class Authenticator
@@ -72,7 +72,7 @@ namespace TavernEssentials.Board
             {
                 ulong userId = 0;
                 if (resp["user_id"] != null) userId = (ulong)resp["user_id"];
-                res.QuestScene = ReadQuestScene(resp);
+                res.Scene = ReadScene(resp);
                 res.Ok = true;
                 res.Jwt = Jwt.MintIdentity(userId, username, token);
                 return res;
@@ -90,9 +90,15 @@ namespace TavernEssentials.Board
             return res;
         }
 
-        static bool ReadQuestScene(JObject resp)
+        static int ReadScene(JObject resp)
         {
-            JToken q = resp["quest_scene_required"];
+            return Scenes.For(ReadSceneFlag(resp, "quest_scene_required"),
+                ReadSceneFlag(resp, "tutorial_scene_required"));
+        }
+
+        static bool ReadSceneFlag(JObject resp, string field)
+        {
+            JToken q = resp[field];
             if (q == null || q.Type == JTokenType.Null) return false;
             try
             {
@@ -102,8 +108,8 @@ namespace TavernEssentials.Board
             {
                 try
                 {
-                    Log.Warn("auth sent an unreadable quest_scene_required ("
-                        + q.Type + ") - assuming a normal overworld.");
+                    Log.Warn("auth sent an unreadable " + field + " ("
+                        + q.Type + ") - reading it as false.");
                 }
                 catch (Exception) { }
                 return false;

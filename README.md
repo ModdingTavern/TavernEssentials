@@ -3,7 +3,7 @@
 What a modded *A Township Tale* server and its players need to get back to normal, in one
 DLL, with nothing hosted.
 
-**Status: 0.13.0.** Eight features, each with its own switch:
+**Status: 0.14.0.** Nine features, each with its own switch:
 
 - **Social**: cross-server friends. Every player gets a key, the game's own friend card works
   again, and on any server running TavernEssentials friends see each other's names in green,
@@ -21,6 +21,10 @@ DLL, with nothing hosted.
 - **Guard**: the server keeps its own rules. JoinGuard: a player plays under the id their login
   token carries, or not at all (logs by default). LogGuard: players' join tokens and passwords
   stay out of the server's logs. Servers only.
+- **SettingsBoard**: the game's own in-VR server settings board, back on the wheel for a
+  server's moderators, owners and admins (their `users.json` roles), with the server's real
+  settings. Only they can change a server's settings from a game; the game itself lets anyone.
+  Servers and game clients.
 - **Names**: the server names players from the logins here and TavernLib's accounts instead of
   asking Alta (console commands by name, the postbox, the time-trial boards). Servers only.
 - **Postbox**: send your friends items by mail. The friend wheel lists your mutual friends on
@@ -332,10 +336,11 @@ server, 16 a removal passed on to the removed friend's game.
   a wipe lock, a save that failed to load) keep the game's tries. This works for every join,
   from the board or the launcher, and changes nothing on the server. `board_join_reasons=0`
   gives the game's own line back.
-- **Quest servers**: a server running the quest overworld gets the quest overworld. The
-  launcher does this by reading the server's auth response and passing `/questScene` before
-  the game starts; a board join happens inside an already-running game, so the mod reads the
-  same field from the same handshake and picks the scene itself.
+- **Quest and tutorial servers**: a server running the quest overworld or the tutorial scene
+  gets that scene. The launcher does this by reading the server's auth response and passing
+  `/questScene` or `/tutorialScene` before the game starts; a board join happens inside an
+  already-running game, so the mod reads the same fields from the same handshake and picks
+  the scene itself. A server that says both runs the tutorial scene, as with the launcher.
 
 To get to the menu, join any server from the launcher as usual, then eat the leave orb: you
 land in the menu with the boards live.
@@ -367,7 +372,7 @@ the game's own offline mode would, or the way the failure already ended:
 | the main menu's inbox spins most of the time | Alta's news statuses, player reports | our welcome, once (below); no reports |
 | (log only) | "is your email verified" | yes; the only effect was a popup |
 | (log only) the analytics queue re-sends its whole history every flush | analytics events | dropped |
-| (log only) every spawn, the wrist menu asks whether you may open the server settings page | a permission check | no (what the failure already gave) |
+| (log only) every spawn, the wrist menu asks whether you may open the server settings page | a permission check | no (what the failure already gave); SettingsBoard decides the bubble |
 
 The inbox's other two calls are answered by the other features: group invites by Board (with
 `board_my_servers=1`), friend requests by Social (with `social_lists=1`). On a server, Social
@@ -458,6 +463,37 @@ files, the `unity-log` archives and old docker logs still hold the tokens of eve
 joined then.
 
 `logguard_mode=off` logs them as before.
+
+## SettingsBoard: the server settings board, for staff
+
+The game still carries its in-VR board for a server's settings: the server settings bubble on
+the wheel opens it, page after page of rows (damage, damage taken, XP rates, PvP, hunger,
+respawn time and more). Alta showed it only to the moderators its website listed for a
+server, and the server's half of it never shipped with the game. SettingsBoard brings it back
+for a server's own staff.
+
+- **Who**: a player whose `users.json` roles hold `moderator`, `owner` or `admin`. On a server
+  whose TavernLib has its roles API, a role you add or take away counts within a second, and the
+  player's bubble follows at their next wheel open. On an older TavernLib, they rejoin first:
+  it sends players their roles only when they join.
+- **Where**: on a server running TavernEssentials 0.14.0 or later with `settings_board=1`, for
+  a player whose game runs it too. Every other wheel stays as it was.
+- **What changes**: only the rows you changed, each kept to its own range (the one the
+  console's `settings changesetting` uses). A value changed from the console while your board
+  was open stays. Saving, the autosave clock, the empty-server shutdown, the physics frame
+  rates, customization and the player limit never change from the board.
+- **The log**: one line per change, `SettingsBoard: "you" changed DamageX: 1 -> 2.`
+
+**The guard is on either way.** The game itself lets any player's game send the server a whole
+new set of settings, saving included, and saves it. On a server running TavernEssentials only
+staff get through, also with `settings_board=0`; anyone else is refused and logged.
+
+The board's command rows (Fill Community Boxes and the like) do nothing yet: the server logs
+which one was pressed. The board's console button opens your own game's console, not the
+server's.
+
+`settings_board=0` on a server: no board for anyone, the guard stays. On your game: the bubble
+stays hidden.
 
 ## Names and the postbox: mail between friends
 
@@ -601,7 +637,7 @@ The old files are left as they were and not read again.
 | `board_verbose` | 0 | log every refresh and skip decision |
 | `board_join_auth` | 1 | authenticate board joins per server; 0 = vanilla joins |
 | `board_leave_orb` | 1 | leave orb returns to the menu; 0 = it quits the game |
-| `board_quest_scene` | 1 | load the quest overworld on servers that ask for it; needs `board_join_auth=1` |
+| `board_quest_scene` | 1 | load the quest overworld or the tutorial scene on servers that ask for one; needs `board_join_auth=1` |
 | `board_my_servers` | 1 | My Servers and the Servers page = the servers you joined; 0 = My Servers shows every server |
 | `board_join_reasons` | 1 | a server's refusal shown on the loading screen, and no two minutes of tries for one waiting will not clear; 0 = the game's own line and tries |
 | `board_marks` | 1 | a `*` after the names of servers where your game found TE's friends working, and "TE friends" on the info board; 0 = no marks |
@@ -611,6 +647,7 @@ The old files are left as they were and not read again.
 | `joinguard_mode` | log | server: `refuse`, `log` or `off` for a join whose id is not its token's |
 | `logguard_mode` | on | server: `on` hides join tokens and passwords in the logs; `off` logs them as before |
 | `names_local` | 1 | server: name players from the logins here and TavernLib's accounts; 0 = ask Alta |
+| `settings_board` | 1 | server: moderators, owners and admins get the server settings board with the real settings; 0 = no board (only they can change settings from a game either way); client: 0 = the bubble stays hidden |
 | `postbox_enabled` | 1 | server: the friend wheel (friends here and away) and the send check; client: friends away on the wheel; 0 = the game's own postbox, which loses what it sends |
 | `mods_board` | 1 | game client: the Settings Panel's fifth lever opens a Mods board; 0 = it stays padlocked |
 | `mods_hide` | (empty) | game client: mods the Mods board leaves out, by the name it shows (or the MelonPreferences category id), comma-separated |
@@ -621,7 +658,7 @@ The old files are left as they were and not read again.
 A config file written by an older version gains the newer lines on the first start of the
 new one, under a line naming that version:
 
-    # Added by TavernEssentials 0.13.0: settings this file did not have yet, each at its default.
+    # Added by TavernEssentials 0.14.0: settings this file did not have yet, each at its default.
 
 A value that is not `0` or `1` (or `true`/`false`, `on`/`off`, `yes`/`no`) keeps the default
 and says so in the log.
@@ -636,7 +673,7 @@ On a client, at start, then on joining a server running Social:
 
     Social: recent players: 12 kept (...\tavernsocial\recent.txt).
     Social: tablet: 8/8 seams patched: recent players, the tablet's pages and the main menu's tab answer at once.
-    Social: TavernEssentials 0.13.0 (client) starting: 3/3 seams patched, loading your identity; the game's friends lists come from your records.
+    Social: TavernEssentials 0.14.0 (client) starting: 3/3 seams patched, loading your identity; the game's friends lists come from your records.
     Board: ready: 8/8 list seams patched, join-auth on, leave-fix on, join reasons on, my-servers on, marks on, list = ... every 30s.
     Backend: ready: 8/8 stand-ins for Alta's dead web API.
     Backend: welcome: not handed out here yet (no ...\UserData\TavernEssentials\welcome-seen.txt); the main menu's inbox shows it.
@@ -645,14 +682,16 @@ On a client, at start, then on joining a server running Social:
     LogGuard: server only, so it stays off on a game client.
     Names: server only, so it stays off on a game client.
     Postbox: ready: the friend wheel also lists your friends who are away (on a server with TavernEssentials 0.9.0 or later).
+    SettingsBoard: ready: the game's server settings bubble shows on the wheel for moderators, owners and admins, on a server that runs the board.
     Mods: ready: the Settings Panel's padlocked fifth lever opens a Mods board with your mods' settings.
     Discord: ready: the game's Discord status will name the server as the community list does, with how many are on it, and say "In the main menu" in the menu.
     Board: community list live: 11 servers.
     Discord: the game's link to Discord is up (application 403426544737058816).
     Discord: status: "" / "In the main menu" (the game had "" / "In Menu").
     Discord: Discord took it.
+    SettingsBoard: the server settings bubble is hidden (no staff role here).
     Board: My Servers: 3 server(s).
-    Backend: welcome: handed to the inbox; ...\UserData\TavernEssentials\welcome-seen.txt is written (0.13.0), so it shows this game only.
+    Backend: welcome: handed to the inbox; ...\UserData\TavernEssentials\welcome-seen.txt is written (0.14.0), so it shows this game only.
     Social: identity AbCdEfGh loaded in 30 ms (...); sign 13 ms, verify 0 ms, tampering caught.
     Social: the game's friends lists show your friends now (wrapped the game's SocialClient).
     Board: the main menu's Servers page lists My Servers now, with Leave server (wrapped the game's GroupsClient).
@@ -686,7 +725,7 @@ On a server:
 
     Social: address book: 12 player(s) proved here before (...\UserData\TavernSocial\directory.txt).
     Social: removals: 3 kept (...\UserData\TavernSocial\withdrawals.txt).
-    Social: TavernEssentials 0.13.0 (server) starting: loading the server key.
+    Social: TavernEssentials 0.14.0 (server) starting: loading the server key.
     Social: tablet reports: ready: a report from a player's tablet fires SocialTabletPlayerReported, the reporter named by their login.
     Board: game client only, so it stays off on a server.
     Backend: game client only, so it stays off on a server.
@@ -696,6 +735,7 @@ On a server:
     JoinGuard: ready (joinguard_mode=log): a join whose id is not its token's is logged, not refused. ...
     Names: ready: player names come from the players here and TavernLib's accounts, never Alta.
     Postbox: ready: the friend wheel lists your mutual friends here and your friends away, and a send is checked before anything is taken.
+    SettingsBoard: ready: moderators, owners and admins (users.json roles) get the game's server settings board; only they can change this server's settings from a game.
     Social: server key XyZ01234 loaded in 70 ms; sign 20 ms, verify 0 ms, tampering caught.
     Social: listening on message type 35 (...).
     Social: SomePlayer (1000000003): identity AbCdEfGh confirmed.
@@ -703,6 +743,9 @@ On a server:
     Social: Bob (1000000004) and SomePlayer (1000000003) are friends here: both showed their record.
     Social: SomePlayer (1000000003) and Bob (1000000004): each other's friend icon on the map.
     Social: SomePlayer (1000000003) removed Bob (1000000004) as a friend; Bob's game was told.
+    SettingsBoard: sent the server settings to "SomeMod" (first board this run; 12 command row assets loaded here).
+    SettingsBoard: "SomeMod" changed DamageX: 1 -> 2.
+    SettingsBoard: refused a server settings change from "SomePlayer": not moderator, owner or admin in users.json.
 
 The first start takes a second or so longer: making a key is slow on the game's runtime. It
 happens off the main thread, so the game does not stall.
@@ -712,12 +755,12 @@ happens off the main thread, so the game does not stall.
 One folder per feature, one entry file each: `Social\Game\SocialFeature.cs`,
 `Board\BoardFeature.cs`, `Backend\BackendFeature.cs`, `Guard\JoinGuard\JoinGuardFeature.cs`,
 `Guard\LogGuard\LogGuardFeature.cs`, `Names\NamesFeature.cs`, `Postbox\PostboxFeature.cs`,
-`ModSettings\ModSettingsFeature.cs`, `Discord\DiscordFeature.cs`. `Main.cs` is the host. It
-takes the process for a server when it was started headless (`-batchmode`, `-nographics`) or
-as a server at all (`/start_server`: the launcher's "show game" option starts a server with a
-window): it reads the config, starts each feature that is on inside its own try/catch, and
-ticks them. `Shared\` holds what more than one feature uses; it and `Social\Core\` stay free
-of the game and MelonLoader.
+`SettingsBoard\SettingsBoardFeature.cs`, `ModSettings\ModSettingsFeature.cs`,
+`Discord\DiscordFeature.cs`. `Main.cs` is the host. It takes the process for a server when it
+was started headless (`-batchmode`, `-nographics`) or as a server at all (`/start_server`: the
+launcher's "show game" option starts a server with a window): it reads the config, starts each
+feature that is on inside its own try/catch, and ticks them. `Shared\` holds what more than
+one feature uses; it and `Social\Core\` stay free of the game and MelonLoader.
 
 `build.ps1` compiles against your game install (set `$game` at the top) and fails on any
 warning, if the DLL ends up referencing TavernLib, or if the game's JSON library (Newtonsoft)
